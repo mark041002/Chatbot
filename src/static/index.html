@@ -1,0 +1,782 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Lokaler KI-Chatbot</title>
+
+    <!-- Favicon Fix - Option 1: Data URL -->
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🤖</text></svg>">
+
+    <!-- Alternative: Prevent favicon request completely -->
+    <!-- <link rel="icon" href="data:,"> -->
+
+    <style>
+        :root {
+            --primary: #2563eb;
+            --primary-dark: #1d4ed8;
+            --success: #059669;
+            --danger: #dc2626;
+            --warning: #d97706;
+            --gray-50: #f9fafb;
+            --gray-100: #f3f4f6;
+            --gray-200: #e5e7eb;
+            --gray-300: #d1d5db;
+            --gray-600: #4b5563;
+            --gray-700: #374151;
+            --gray-800: #1f2937;
+            --gray-900: #111827;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background: var(--gray-50);
+            color: var(--gray-900);
+            line-height: 1.6;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            display: grid;
+            grid-template-columns: 300px 1fr;
+            gap: 20px;
+            height: 100vh;
+        }
+
+        /* Sidebar */
+        .sidebar {
+            background: white;
+            border-radius: 8px;
+            padding: 20px;
+            border: 1px solid var(--gray-200);
+            overflow-y: auto;
+        }
+
+        .sidebar h2 {
+            font-size: 18px;
+            margin-bottom: 16px;
+            color: var(--gray-700);
+        }
+
+        .sidebar h3 {
+            font-size: 14px;
+            margin: 20px 0 8px 0;
+            color: var(--gray-600);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            font-weight: 600;
+        }
+
+        /* Status */
+        .status {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 12px;
+            border-radius: 4px;
+            font-size: 14px;
+            font-weight: 500;
+            margin-bottom: 16px;
+        }
+
+        .status.online {
+            background: #ecfdf5;
+            color: var(--success);
+        }
+
+        .status.offline {
+            background: #fef2f2;
+            color: var(--danger);
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: currentColor;
+        }
+
+        /* Buttons */
+        .btn {
+            padding: 8px 16px;
+            border: none;
+            border-radius: 4px;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s;
+            text-decoration: none;
+            display: inline-block;
+            text-align: center;
+        }
+
+        .btn-primary {
+            background: var(--primary);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: var(--primary-dark);
+        }
+
+        .btn-secondary {
+            background: var(--gray-100);
+            color: var(--gray-700);
+            border: 1px solid var(--gray-300);
+        }
+
+        .btn-secondary:hover {
+            background: var(--gray-200);
+        }
+
+        .btn-danger {
+            background: var(--danger);
+            color: white;
+        }
+
+        .btn-small {
+            padding: 4px 8px;
+            font-size: 12px;
+        }
+
+        /* Form Elements */
+        .form-group {
+            margin-bottom: 16px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 4px;
+            font-size: 14px;
+            font-weight: 500;
+            color: var(--gray-700);
+        }
+
+        select, input[type="file"] {
+            width: 100%;
+            padding: 8px 12px;
+            border: 1px solid var(--gray-300);
+            border-radius: 4px;
+            font-size: 14px;
+        }
+
+        /* Document List */
+        .document-list {
+            list-style: none;
+        }
+
+        .document-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 8px 0;
+            border-bottom: 1px solid var(--gray-200);
+        }
+
+        .document-item:last-child {
+            border-bottom: none;
+        }
+
+        .document-name {
+            font-size: 14px;
+            color: var(--gray-700);
+        }
+
+        /* Chat Area */
+        .chat-area {
+            background: white;
+            border-radius: 8px;
+            border: 1px solid var(--gray-200);
+            display: flex;
+            flex-direction: column;
+            height: calc(100vh - 40px);
+        }
+
+        .chat-header {
+            padding: 16px 20px;
+            border-bottom: 1px solid var(--gray-200);
+            background: var(--gray-50);
+            border-radius: 8px 8px 0 0;
+        }
+
+        .chat-header h1 {
+            font-size: 20px;
+            color: var(--gray-800);
+        }
+
+        .chat-messages {
+            flex: 1;
+            padding: 20px;
+            overflow-y: auto;
+            background: white;
+        }
+
+        .message {
+            margin-bottom: 16px;
+            max-width: 80%;
+        }
+
+        .message.user {
+            margin-left: auto;
+        }
+
+        .message-content {
+            padding: 12px 16px;
+            border-radius: 8px;
+            font-size: 14px;
+            line-height: 1.5;
+        }
+
+        .message.user .message-content {
+            background: var(--primary);
+            color: white;
+            border-radius: 16px 16px 4px 16px;
+        }
+
+        .message.assistant .message-content {
+            background: var(--gray-100);
+            color: var(--gray-800);
+            border-radius: 16px 16px 16px 4px;
+        }
+
+        .message-sources {
+            font-size: 12px;
+            color: var(--gray-600);
+            margin-top: 4px;
+            font-style: italic;
+        }
+
+        .chat-input {
+            padding: 16px 20px;
+            border-top: 1px solid var(--gray-200);
+            background: var(--gray-50);
+            border-radius: 0 0 8px 8px;
+        }
+
+        .input-group {
+            display: flex;
+            gap: 8px;
+        }
+
+        .message-input {
+            flex: 1;
+            padding: 10px 16px;
+            border: 1px solid var(--gray-300);
+            border-radius: 20px;
+            font-size: 14px;
+            outline: none;
+        }
+
+        .message-input:focus {
+            border-color: var(--primary);
+        }
+
+        .send-btn {
+            padding: 10px 20px;
+            background: var(--primary);
+            color: white;
+            border: none;
+            border-radius: 20px;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        .send-btn:hover {
+            background: var(--primary-dark);
+        }
+
+        .send-btn:disabled {
+            background: var(--gray-300);
+            cursor: not-allowed;
+        }
+
+        /* Loading */
+        .loading {
+            display: none;
+            padding: 16px;
+            text-align: center;
+            color: var(--gray-600);
+            font-size: 14px;
+        }
+
+        .loading.show {
+            display: block;
+        }
+
+        /* Notifications */
+        .notification {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            padding: 12px 16px;
+            border-radius: 4px;
+            font-size: 14px;
+            font-weight: 500;
+            z-index: 1000;
+            transform: translateX(400px);
+            transition: transform 0.3s;
+        }
+
+        .notification.show {
+            transform: translateX(0);
+        }
+
+        .notification.success {
+            background: #ecfdf5;
+            color: var(--success);
+            border: 1px solid #a7f3d0;
+        }
+
+        .notification.error {
+            background: #fef2f2;
+            color: var(--danger);
+            border: 1px solid #fecaca;
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .container {
+                grid-template-columns: 1fr;
+                grid-template-rows: auto 1fr;
+                padding: 10px;
+            }
+
+            .sidebar {
+                padding: 16px;
+            }
+
+            .chat-area {
+                height: calc(100vh - 200px);
+            }
+        }
+
+        /* Empty state */
+        .empty-state {
+            text-align: center;
+            padding: 40px 20px;
+            color: var(--gray-600);
+        }
+
+        .empty-state h3 {
+            margin-bottom: 8px;
+            font-size: 16px;
+        }
+
+        .empty-state p {
+            font-size: 14px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Sidebar -->
+        <div class="sidebar">
+            <h2>🤖 KI-Chatbot</h2>
+
+            <!-- Status -->
+            <div id="status" class="status offline">
+                <div class="status-dot"></div>
+                <span>Verbindung wird geprüft...</span>
+            </div>
+
+            <!-- Model Selection -->
+            <h3>Model</h3>
+            <div class="form-group">
+                <select id="modelSelect" disabled>
+                    <option>Lade Modelle...</option>
+                </select>
+                <button id="testModelBtn" class="btn btn-secondary btn-small" style="margin-top: 8px; width: 100%;" disabled>
+                    Model testen
+                </button>
+            </div>
+
+            <!-- Document Upload -->
+            <h3>Dokument hochladen</h3>
+            <div class="form-group">
+                <input type="file" id="fileUpload" accept=".pdf,.txt,.docx" disabled>
+                <button id="uploadBtn" class="btn btn-primary btn-small" style="margin-top: 8px; width: 100%;" disabled>
+                    Hochladen
+                </button>
+            </div>
+
+            <!-- Documents -->
+            <h3>Dokumente</h3>
+            <ul id="documentList" class="document-list">
+                <li style="color: var(--gray-600); font-size: 14px; font-style: italic;">Lade Dokumente...</li>
+            </ul>
+
+            <!-- Actions -->
+            <h3>Aktionen</h3>
+            <button id="clearChatBtn" class="btn btn-secondary" style="width: 100%; margin-bottom: 8px;">
+                Chat löschen
+            </button>
+        </div>
+
+        <!-- Chat Area -->
+        <div class="chat-area">
+            <div class="chat-header">
+                <h1>💬 Chat</h1>
+            </div>
+
+            <div class="chat-messages" id="chatMessages">
+                <div class="empty-state">
+                    <h3>Willkommen beim lokalen KI-Chatbot</h3>
+                    <p>Stelle eine Frage oder lade ein Dokument hoch, um zu beginnen.</p>
+                </div>
+            </div>
+
+            <div class="loading" id="loading">
+                🤖 Der Bot arbeitet...
+            </div>
+
+            <div class="chat-input">
+                <div class="input-group">
+                    <input type="text" id="messageInput" class="message-input" placeholder="Stelle eine Frage..." disabled>
+                    <button id="sendBtn" class="send-btn" disabled>Senden</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="notification" class="notification"></div>
+
+    <script>
+        // API Base URL
+        const API_BASE = '';
+
+        // DOM Elements
+        const statusEl = document.getElementById('status');
+        const modelSelect = document.getElementById('modelSelect');
+        const testModelBtn = document.getElementById('testModelBtn');
+        const fileUpload = document.getElementById('fileUpload');
+        const uploadBtn = document.getElementById('uploadBtn');
+        const documentList = document.getElementById('documentList');
+        const chatMessages = document.getElementById('chatMessages');
+        const messageInput = document.getElementById('messageInput');
+        const sendBtn = document.getElementById('sendBtn');
+        const clearChatBtn = document.getElementById('clearChatBtn');
+        const loading = document.getElementById('loading');
+        const notification = document.getElementById('notification');
+
+        // State
+        let isInitialized = false;
+        let currentModel = '';
+
+        // Initialize app
+        async function initialize() {
+            try {
+                await checkHealth();
+                await loadModels();
+                await loadDocuments();
+                enableInterface();
+                isInitialized = true;
+            } catch (error) {
+                console.error('Initialization failed:', error);
+                showNotification('Fehler beim Initialisieren der Anwendung', 'error');
+            }
+        }
+
+        // Check API health
+        async function checkHealth() {
+            const response = await fetch(`${API_BASE}/api/health`);
+            const data = await response.json();
+
+            if (data.ollama_available) {
+                statusEl.className = 'status online';
+                statusEl.innerHTML = '<div class="status-dot"></div><span>✅ Ollama verbunden</span>';
+                currentModel = data.current_model || '';
+            } else {
+                statusEl.className = 'status offline';
+                statusEl.innerHTML = '<div class="status-dot"></div><span>❌ Ollama nicht verfügbar</span>';
+                throw new Error('Ollama not available');
+            }
+        }
+
+        // Load available models
+        async function loadModels() {
+            const response = await fetch(`${API_BASE}/api/models`);
+            const data = await response.json();
+
+            modelSelect.innerHTML = '';
+
+            if (data.models.length > 0) {
+                data.models.forEach(model => {
+                    const option = document.createElement('option');
+                    option.value = model;
+                    option.textContent = model;
+                    if (model === data.current_model) {
+                        option.selected = true;
+                    }
+                    modelSelect.appendChild(option);
+                });
+            } else {
+                const option = document.createElement('option');
+                option.textContent = 'Keine Modelle verfügbar';
+                modelSelect.appendChild(option);
+            }
+        }
+
+        // Load documents
+        async function loadDocuments() {
+            const response = await fetch(`${API_BASE}/api/documents`);
+            const data = await response.json();
+
+            documentList.innerHTML = '';
+
+            if (data.documents.length > 0) {
+                data.documents.forEach(doc => {
+                    const li = document.createElement('li');
+                    li.className = 'document-item';
+                    li.innerHTML = `
+                        <span class="document-name">📄 ${doc}</span>
+                        <button class="btn btn-danger btn-small" onclick="deleteDocument('${doc}')">🗑️</button>
+                    `;
+                    documentList.appendChild(li);
+                });
+            } else {
+                const li = document.createElement('li');
+                li.style.cssText = 'color: var(--gray-600); font-size: 14px; font-style: italic;';
+                li.textContent = 'Keine Dokumente vorhanden';
+                documentList.appendChild(li);
+            }
+        }
+
+        // Enable interface
+        function enableInterface() {
+            modelSelect.disabled = false;
+            testModelBtn.disabled = false;
+            fileUpload.disabled = false;
+            uploadBtn.disabled = false;
+            messageInput.disabled = false;
+            sendBtn.disabled = false;
+        }
+
+        // Show notification
+        function showNotification(message, type = 'success') {
+            notification.textContent = message;
+            notification.className = `notification ${type} show`;
+
+            setTimeout(() => {
+                notification.classList.remove('show');
+            }, 3000);
+        }
+
+        // Test model
+        async function testModel() {
+            const model = modelSelect.value;
+            if (!model) return;
+
+            testModelBtn.disabled = true;
+            testModelBtn.textContent = '🧪 Teste...';
+
+            try {
+                const response = await fetch(`${API_BASE}/api/models/${model}`, {
+                    method: 'POST'
+                });
+
+                if (response.ok) {
+                    showNotification('✅ Model funktioniert!', 'success');
+                    currentModel = model;
+                } else {
+                    const error = await response.json();
+                    showNotification(error.detail || '❌ Model-Test fehlgeschlagen', 'error');
+                }
+            } catch (error) {
+                showNotification('❌ Fehler beim Testen des Models', 'error');
+            } finally {
+                testModelBtn.disabled = false;
+                testModelBtn.textContent = 'Model testen';
+            }
+        }
+
+        // Upload document
+        async function uploadDocument() {
+            const file = fileUpload.files[0];
+            if (!file) {
+                showNotification('⚠️ Bitte wähle eine Datei aus', 'error');
+                return;
+            }
+
+            uploadBtn.disabled = true;
+            uploadBtn.textContent = '📤 Lade hoch...';
+
+            const formData = new FormData();
+            formData.append('file', file);
+
+            try {
+                const response = await fetch(`${API_BASE}/api/upload`, {
+                    method: 'POST',
+                    body: formData
+                });
+
+                if (response.ok) {
+                    const data = await response.json();
+                    showNotification(`✅ ${data.message}`, 'success');
+                    await loadDocuments();
+                    fileUpload.value = '';
+                } else {
+                    const error = await response.json();
+                    showNotification(error.detail || '❌ Upload fehlgeschlagen', 'error');
+                }
+            } catch (error) {
+                showNotification('❌ Fehler beim Hochladen', 'error');
+            } finally {
+                uploadBtn.disabled = false;
+                uploadBtn.textContent = 'Hochladen';
+            }
+        }
+
+        // Delete document
+        async function deleteDocument(docName) {
+            if (!confirm(`Dokument "${docName}" wirklich löschen?`)) return;
+
+            try {
+                const response = await fetch(`${API_BASE}/api/documents/${docName}`, {
+                    method: 'DELETE'
+                });
+
+                if (response.ok) {
+                    showNotification('✅ Dokument gelöscht', 'success');
+                    await loadDocuments();
+                } else {
+                    const error = await response.json();
+                    showNotification(error.detail || '❌ Löschen fehlgeschlagen', 'error');
+                }
+            } catch (error) {
+                showNotification('❌ Fehler beim Löschen', 'error');
+            }
+        }
+
+        // Send message
+        async function sendMessage() {
+            const message = messageInput.value.trim();
+            if (!message) return;
+
+            // Add user message to chat
+            addMessage(message, 'user');
+            messageInput.value = '';
+
+            // Show loading
+            loading.classList.add('show');
+            sendBtn.disabled = true;
+
+            try {
+                const response = await fetch(`${API_BASE}/api/chat`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ message })
+                });
+
+                const data = await response.json();
+
+                if (response.ok && data.success) {
+                    addMessage(data.response, 'assistant', data.sources);
+                } else {
+                    addMessage(data.detail || '❌ Fehler bei der Chat-Anfrage', 'assistant');
+                }
+            } catch (error) {
+                addMessage('❌ Verbindungsfehler zur API', 'assistant');
+            } finally {
+                loading.classList.remove('show');
+                sendBtn.disabled = false;
+                messageInput.focus();
+            }
+        }
+
+        // Add message to chat
+        function addMessage(content, sender, sources = []) {
+            // Remove empty state if present
+            const emptyState = chatMessages.querySelector('.empty-state');
+            if (emptyState) {
+                emptyState.remove();
+            }
+
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${sender}`;
+
+            let sourcesHtml = '';
+            if (sources && sources.length > 0) {
+                sourcesHtml = `<div class="message-sources">📄 Quellen: ${sources.join(', ')}</div>`;
+            }
+
+            messageDiv.innerHTML = `
+                <div class="message-content">${content}</div>
+                ${sourcesHtml}
+            `;
+
+            chatMessages.appendChild(messageDiv);
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+        }
+
+        // Clear chat
+        function clearChat() {
+            chatMessages.innerHTML = `
+                <div class="empty-state">
+                    <h3>Willkommen beim lokalen KI-Chatbot</h3>
+                    <p>Stelle eine Frage oder lade ein Dokument hoch, um zu beginnen.</p>
+                </div>
+            `;
+        }
+
+        // Event Listeners
+        testModelBtn.addEventListener('click', testModel);
+        uploadBtn.addEventListener('click', uploadDocument);
+        sendBtn.addEventListener('click', sendMessage);
+        clearChatBtn.addEventListener('click', clearChat);
+
+        // Model selection change
+        modelSelect.addEventListener('change', async () => {
+            const selectedModel = modelSelect.value;
+            if (selectedModel && selectedModel !== currentModel) {
+                try {
+                    const response = await fetch(`${API_BASE}/api/models/${selectedModel}`, {
+                        method: 'POST'
+                    });
+
+                    if (response.ok) {
+                        currentModel = selectedModel;
+                        showNotification(`✅ Model zu ${selectedModel} gewechselt`, 'success');
+                    } else {
+                        const error = await response.json();
+                        showNotification(error.detail || '❌ Model-Wechsel fehlgeschlagen', 'error');
+                        // Reset selection
+                        modelSelect.value = currentModel;
+                    }
+                } catch (error) {
+                    showNotification('❌ Fehler beim Wechseln des Models', 'error');
+                    modelSelect.value = currentModel;
+                }
+            }
+        });
+
+        // Enter key to send message
+        messageInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter' && !sendBtn.disabled) {
+                sendMessage();
+            }
+        });
+
+        // File upload on change
+        fileUpload.addEventListener('change', () => {
+            if (fileUpload.files[0]) {
+                uploadBtn.textContent = '📤 Hochladen';
+            }
+        });
+
+        // Initialize app when page loads
+        document.addEventListener('DOMContentLoaded', initialize);
+    </script>
+</body>
+</html>
