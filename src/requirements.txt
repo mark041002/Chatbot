@@ -1,0 +1,22 @@
+# Bestehende Abhängigkeiten
+fastapi
+uvicorn[standard]
+chromadb
+sentence-transformers
+PyPDF2
+python-docx
+requests
+google-adk
+
+# Chat History
+python-multipart
+
+# EasyOCR für OCR (viel einfacher als Tesseract!)
+easyocr
+pdf2image
+Pillow
+numpy
+
+# Optional: Für bessere Performance
+torch
+torchvision

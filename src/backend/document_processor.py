@@ -1,7 +1,8 @@
 """
 Document Processor - Verarbeitet verschiedene Dokumenttypen zu Text-Chunks
+Jetzt mit EasyOCR-Unterstützung für eingescannte PDFs (keine Tesseract Installation nötig!)
 
-Unterstützte Formate: PDF, DOCX, TXT
+Unterstützte Formate: PDF (mit OCR), DOCX, TXT
 Ausgabe: Text-Chunks für Vektordatenbank
 """
 
@@ -11,23 +12,52 @@ from typing import List, Dict, Any
 import os
 import re
 
+# OCR-Abhängigkeiten (EasyOCR - viel einfacher als Tesseract!)
+try:
+    import easyocr
+    from pdf2image import convert_from_path
+    from PIL import Image
+    import numpy as np
+    OCR_AVAILABLE = True
+except ImportError:
+    OCR_AVAILABLE = False
+
 
 class DokumentProcessor:
     """
     Verarbeitet Dokumente und erstellt Text-Chunks für die Vektordatenbank
+    Jetzt mit automatischer EasyOCR-Erkennung für eingescannte PDFs
 
     Args:
         chunk_groesse: Maximale Größe der Text-Chunks in Zeichen
+        ocr_enabled: Ob OCR verwendet werden soll (default: True wenn verfügbar)
     """
 
-    def __init__(self, chunk_groesse: int = 1000):
+    def __init__(self, chunk_groesse: int = 1000, ocr_enabled: bool = True):
         """
         Initialisiert den Document Processor
 
         Args:
             chunk_groesse: Maximale Anzahl Zeichen pro Chunk (default: 1000)
+            ocr_enabled: OCR aktivieren wenn verfügbar
         """
         self.chunk_groesse = chunk_groesse
+        self.ocr_enabled = ocr_enabled and OCR_AVAILABLE
+        self.ocr_reader = None
+
+        if self.ocr_enabled:
+            try:
+                print("Initialisiere EasyOCR (Deutsch + Englisch)...")
+                # EasyOCR Reader mit Deutsch und Englisch initialisieren
+                self.ocr_reader = easyocr.Reader(['de', 'en'], gpu=False)  # CPU-only für bessere Kompatibilität
+                print("EasyOCR erfolgreich initialisiert")
+            except Exception as e:
+                print(f"Fehler beim Initialisieren von EasyOCR: {e}")
+                self.ocr_enabled = False
+                self.ocr_reader = None
+
+        if ocr_enabled and not OCR_AVAILABLE:
+            print("OCR-Bibliotheken nicht gefunden. Installiere: pip install easyocr pdf2image pillow")
 
     def dokument_verarbeiten(self, datei_pfad: str, dokument_name: str = None) -> Dict[str, Any]:
         """
@@ -43,7 +73,9 @@ class DokumentProcessor:
                 'dokument_name': str,
                 'chunks': List[str],
                 'chunk_anzahl': int,
-                'text_laenge': int
+                'text_laenge': int,
+                'ocr_used': bool,  # NEU: Ob OCR verwendet wurde
+                'processing_info': str  # NEU: Info über Verarbeitung
             }
         """
         # Dokumentname bestimmen
@@ -51,25 +83,37 @@ class DokumentProcessor:
             dokument_name = os.path.splitext(os.path.basename(datei_pfad))[0]
 
         # Text extrahieren und chunken
-        text = self.text_extrahieren(datei_pfad)
+        result = self.text_extrahieren(datei_pfad)
+        text = result['text']
+        ocr_used = result.get('ocr_used', False)
+        processing_info = result.get('info', 'Standard-Textextraktion')
+
         chunks = self.text_chunken(text)
 
         return {
             'dokument_name': dokument_name,
             'chunks': chunks,
             'chunk_anzahl': len(chunks),
-            'text_laenge': len(text)
+            'text_laenge': len(text),
+            'ocr_used': ocr_used,
+            'processing_info': processing_info
         }
 
-    def text_extrahieren(self, datei_pfad: str) -> str:
+    def text_extrahieren(self, datei_pfad: str) -> Dict[str, Any]:
         """
         Extrahiert Text aus verschiedenen Dateiformaten
+        Jetzt mit automatischer EasyOCR-Erkennung für PDFs
 
         Args:
             datei_pfad: Pfad zur Datei
 
         Returns:
-            Extrahierter Text als String
+            Dict mit Text und Verarbeitungsinfo:
+            {
+                'text': str,
+                'ocr_used': bool,
+                'info': str
+            }
 
         Raises:
             ValueError: Bei nicht unterstütztem Dateiformat
@@ -77,13 +121,126 @@ class DokumentProcessor:
         erweiterung = os.path.splitext(datei_pfad)[1].lower()
 
         if erweiterung == '.pdf':
-            return self._pdf_text_extrahieren(datei_pfad)
+            return self._pdf_text_extrahieren_mit_ocr(datei_pfad)
         elif erweiterung == '.docx':
-            return self._docx_text_extrahieren(datei_pfad)
+            text = self._docx_text_extrahieren(datei_pfad)
+            return {'text': text, 'ocr_used': False, 'info': 'DOCX-Textextraktion'}
         elif erweiterung == '.txt':
-            return self._txt_text_extrahieren(datei_pfad)
+            text = self._txt_text_extrahieren(datei_pfad)
+            return {'text': text, 'ocr_used': False, 'info': 'TXT-Datei gelesen'}
         else:
             raise ValueError(f"Nicht unterstütztes Dateiformat: {erweiterung}")
+
+    def _pdf_text_extrahieren_mit_ocr(self, datei_pfad: str) -> Dict[str, Any]:
+        """
+        Extrahiert Text aus PDF mit automatischer EasyOCR-Erkennung
+
+        Args:
+            datei_pfad: Pfad zur PDF-Datei
+
+        Returns:
+            Dict mit Text und OCR-Info
+        """
+        # Erst normale Textextraktion versuchen
+        standard_text = self._pdf_text_extrahieren(datei_pfad)
+
+        # Prüfen ob der Text "gut genug" ist
+        if self._ist_text_brauchbar(standard_text):
+            return {
+                'text': standard_text,
+                'ocr_used': False,
+                'info': 'PDF-Textextraktion (digitaler Text)'
+            }
+
+        # Wenn EasyOCR verfügbar ist und Text schlecht → OCR verwenden
+        if self.ocr_enabled and self.ocr_reader:
+            print(f"📖 Erkenne eingescannten Text mit EasyOCR in {os.path.basename(datei_pfad)}...")
+            ocr_text = self._pdf_easyocr_extrahieren(datei_pfad)
+
+            if len(ocr_text.strip()) > len(standard_text.strip()):
+                return {
+                    'text': ocr_text,
+                    'ocr_used': True,
+                    'info': 'EasyOCR-Texterkennung (eingescanntes PDF)'
+                }
+
+        # Fallback zum Standardtext
+        return {
+            'text': standard_text,
+            'ocr_used': False,
+            'info': 'PDF-Textextraktion (möglicherweise eingescannt, OCR nicht verfügbar)'
+        }
+
+    def _ist_text_brauchbar(self, text: str) -> bool:
+        """
+        Prüft ob extrahierter Text brauchbar ist oder OCR nötig ist
+
+        Args:
+            text: Extrahierter Text
+
+        Returns:
+            True wenn Text brauchbar ist, False wenn OCR nötig
+        """
+        text = text.strip()
+
+        # Zu wenig Text
+        if len(text) < 50:
+            return False
+
+        # Zu viele seltsame Zeichen (Hinweis auf schlechte Texterkennung)
+        seltsame_zeichen = sum(1 for c in text if ord(c) > 127 and c not in 'äöüßÄÖÜ')
+        if seltsame_zeichen / len(text) > 0.1:  # Mehr als 10% seltsame Zeichen
+            return False
+
+        # Zu wenige Leerzeichen (Hinweis auf zusammengeflossenen Text)
+        leerzeichen_ratio = text.count(' ') / len(text)
+        if leerzeichen_ratio < 0.1:  # Weniger als 10% Leerzeichen
+            return False
+
+        return True
+
+    def _pdf_easyocr_extrahieren(self, datei_pfad: str) -> str:
+        """
+        Extrahiert Text mit EasyOCR aus PDF
+
+        Args:
+            datei_pfad: Pfad zur PDF-Datei
+
+        Returns:
+            Mit EasyOCR extrahierter Text
+        """
+        if not self.ocr_enabled or not self.ocr_reader:
+            return ""
+
+        try:
+            # PDF zu Bildern konvertieren
+            seiten = convert_from_path(datei_pfad, dpi=200)  # Niedrigere DPI für Geschwindigkeit
+
+            ocr_text = ""
+            for i, seite in enumerate(seiten):
+                print(f"   EasyOCR Seite {i+1}/{len(seiten)}...")
+
+                # PIL Image zu numpy array konvertieren (für EasyOCR)
+                img_array = np.array(seite)
+
+                # EasyOCR auf das Bild anwenden
+                results = self.ocr_reader.readtext(img_array)
+
+                # Text aus EasyOCR-Ergebnissen extrahieren
+                seiten_text = ""
+                for (bbox, text, confidence) in results:
+                    # Nur Text mit ausreichender Konfidenz verwenden
+                    if confidence > 0.5:  # 50% Mindest-Konfidenz
+                        seiten_text += text + " "
+
+                ocr_text += seiten_text + "\n\n"
+
+            print(f"EasyOCR abgeschlossen - {len(ocr_text)} Zeichen extrahiert")
+            return ocr_text
+
+        except Exception as e:
+            print(f"EasyOCR-Fehler: {e}")
+            return ""
 
     def text_chunken(self, text: str) -> List[str]:
         """
@@ -118,7 +275,7 @@ class DokumentProcessor:
 
     def _pdf_text_extrahieren(self, datei_pfad: str) -> str:
         """
-        Extrahiert Text aus PDF-Dateien
+        Extrahiert Text aus PDF-Dateien (Standard-Methode)
 
         Args:
             datei_pfad: Pfad zur PDF-Datei

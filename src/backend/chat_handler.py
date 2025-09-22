@@ -112,13 +112,40 @@ class OllamaLLM(BaseLlm):
     Ollama LLM Wrapper für Google ADK
     """
 
-    def __init__(self, ollama_url: str = "http://localhost:11434", model: str = "llama3"):
+    def __init__(self, ollama_url: str = "http://localhost:11434", model: str = None):
+        # Verfügbare Modelle ermitteln
+        available_models = self._get_available_models(ollama_url)
+
+        # Falls kein Model angegeben wurde oder das angegebene Model nicht verfügbar ist,
+        # das erste verfügbare Model verwenden
+        if not model or model not in available_models:
+            if available_models:
+                model = available_models[0]
+                print(f"Verwende erstes verfügbares Model: {model}")
+            else:
+                # Fallback falls kein Model verfügbar ist
+                model = "llama3"
+                print("Warnung: Kein Model verfügbar, verwende Fallback 'llama3'")
+
         # Zuerst BaseLlm mit model initialisieren
         super().__init__(model=model)
 
         # Dann unsere eigenen Attribute setzen
         self._ollama_url = ollama_url
         self._model_name = model
+
+    def _get_available_models(self, ollama_url: str) -> List[str]:
+        """
+        Ermittelt verfügbare Modelle von Ollama
+        """
+        try:
+            response = requests.get(f"{ollama_url}/api/tags", timeout=5)
+            if response.status_code == 200:
+                modelle = response.json().get("models", [])
+                return [model["name"] for model in modelle]
+            return []
+        except:
+            return []
 
     @property
     def ollama_url(self):
@@ -200,21 +227,21 @@ class ChatHandlerADK:
     Intelligenter Chat Handler mit Google ADK - Entscheidet automatisch wann Dokumentensuche nötig ist
     """
 
-    def __init__(self, vektor_store, ollama_url: str = "http://localhost:11434", model: str = "llama3"):
+    def __init__(self, vektor_store, ollama_url: str = "http://localhost:11434", model: str = None):
         """
         Initialisiert den ADK-basierten Chat Handler
 
         Args:
             vektor_store: VektorStore Instanz für Dokumentensuche
             ollama_url: URL des Ollama-Servers
-            model: Name des zu verwendenden Modells
+            model: Name des zu verwendenden Modells (falls None, wird das erste verfügbare gewählt)
         """
         self.ollama_url = ollama_url
-        self.model = model
         self.vektor_store = vektor_store
 
-        # Ollama LLM initialisieren
+        # Ollama LLM initialisieren (wählt automatisch erstes verfügbares Model)
         self.llm = OllamaLLM(ollama_url, model)
+        self.model = self.llm.model_name
 
         # Tools definieren
         self.dokument_suche_tool = DokumentenSucheTool(vektor_store)

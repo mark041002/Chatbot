@@ -18,21 +18,21 @@ def ollama_debug():
     print("=" * 50)
 
     # 1. Basis-Verbindung testen
-    print("\n1️⃣ Teste Ollama-Verbindung...")
+    print("\n Teste Ollama-Verbindung...")
     try:
         response = requests.get(f"{ollama_url}/api/tags", timeout=5)
         if response.status_code == 200:
-            print("✅ Ollama ist erreichbar")
+            print("Ollama ist erreichbar")
         else:
-            print(f"❌ Ollama antwortet mit Status {response.status_code}")
+            print(f"Ollama antwortet mit Status {response.status_code}")
             return
     except Exception as e:
-        print(f"❌ Ollama nicht erreichbar: {e}")
-        print("💡 Starte Ollama mit: ollama serve")
+        print(f"Ollama nicht erreichbar: {e}")
+        print("Starte Ollama mit: ollama serve")
         return
 
     # 2. Verfügbare Modelle auflisten
-    print("\n2️⃣ Verfügbare Modelle:")
+    print("\n Verfügbare Modelle:")
     try:
         data = response.json()
         modelle = data.get("models", [])
@@ -42,15 +42,15 @@ def ollama_debug():
                 size = model.get("size", 0) / (1024 ** 3)  # GB
                 print(f"   {i}. {name} ({size:.1f} GB)")
         else:
-            print("   ❌ Keine Modelle installiert!")
-            print("   💡 Installiere ein Model mit: ollama pull llama3")
+            print("Keine Modelle installiert!")
+            print("Installiere ein Model mit: ollama pull llama3")
             return
     except Exception as e:
-        print(f"   ❌ Fehler beim Laden der Modelle: {e}")
+        print(f"   Fehler beim Laden der Modelle: {e}")
         return
 
     # 3. Jedes Model testen
-    print("\n3️⃣ Teste Modelle:")
+    print("\n3️ Teste Modelle:")
     for model in modelle:
         model_name = model["name"]  # Vollständiger Name mit Tag
 
@@ -59,9 +59,9 @@ def ollama_debug():
         # Test mit vollständigem Namen (empfohlen)
         success = test_model(ollama_url, model_name)
         if success:
-            print(f"   ✅ {model_name} funktioniert")
+            print(f"{model_name} funktioniert")
         else:
-            print(f"   ❌ {model_name} funktioniert nicht")
+            print(f" {model_name} funktioniert nicht")
 
             # Fallback: Test ohne Tag
             base_name = model_name.split(":")[0]
@@ -69,9 +69,9 @@ def ollama_debug():
                 print(f"   Teste auch {base_name}...")
                 success = test_model(ollama_url, base_name)
                 if success:
-                    print(f"   ⚠️  {base_name} funktioniert (ohne Tag)")
+                    print(f"{base_name} funktioniert (ohne Tag)")
                 else:
-                    print(f"   ❌ {base_name} funktioniert auch nicht")
+                    print(f"{base_name} funktioniert auch nicht")
 
     print("\n" + "=" * 50)
     print("Debug abgeschlossen! 🎉")
