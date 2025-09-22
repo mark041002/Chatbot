@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Lokaler KI-Chatbot</title>
+
+    <!-- Favicon Fix - Option 1: Data URL -->
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🤖</text></svg>">
+
+    <!-- Alternative: Verhindert Favicon-Anfrage komplett -->
+    <!-- <link rel="icon" href="data:,"> -->
+
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <!-- Hauptcontainer für die gesamte Anwendung -->
+    <div class="container">
+        <!-- Sidebar mit Einstellungen und Dokumentenverwaltung -->
+        <div class="sidebar">
+            <h2>🤖 KI-Chatbot</h2>
+
+            <!-- Status-Anzeige für Ollama-Verbindung -->
+            <div id="status" class="status offline">
+                <div class="status-dot"></div>
+                <span>Verbindung wird geprüft...</span>
+            </div>
+
+            <!-- Model-Auswahl -->
+            <h3>Model</h3>
+            <div class="form-group">
+                <select id="modelSelect" disabled>
+                    <option>Lade Modelle...</option>
+                </select>
+                <button id="testModelBtn" class="btn btn-secondary btn-small" style="margin-top: 8px; width: 100%;" disabled>
+                    Model testen
+                </button>
+            </div>
+
+            <!-- Dokument-Upload -->
+            <h3>Dokument hochladen</h3>
+            <div class="form-group">
+                <input type="file" id="fileUpload" accept=".pdf,.txt,.docx" disabled>
+                <button id="uploadBtn" class="btn btn-primary btn-small" style="margin-top: 8px; width: 100%;" disabled>
+                    Hochladen
+                </button>
+            </div>
+
+            <!-- Liste der hochgeladenen Dokumente -->
+            <h3>Dokumente</h3>
+            <ul id="documentList" class="document-list">
+                <li style="color: var(--gray-600); font-size: 14px; font-style: italic;">Lade Dokumente...</li>
+            </ul>
+
+            <!-- Aktionen -->
+            <h3>Aktionen</h3>
+            <button id="clearChatBtn" class="btn btn-secondary" style="width: 100%; margin-bottom: 8px;">
+                Chat löschen
+            </button>
+        </div>
+
+        <!-- Chat-Bereich -->
+        <div class="chat-area">
+            <!-- Chat-Header -->
+            <div class="chat-header">
+                <h1>💬 Chat</h1>
+            </div>
+
+            <!-- Nachrichten-Container -->
+            <div class="chat-messages" id="chatMessages">
+                <div class="empty-state">
+                    <h3>Willkommen beim lokalen KI-Chatbot</h3>
+                    <p>Stelle eine Frage oder lade ein Dokument hoch, um zu beginnen.</p>
+                </div>
+            </div>
+
+            <!-- Lade-Indikator -->
+            <div class="loading" id="loading">
+                🤖 Der Bot arbeitet...
+            </div>
+
+            <!-- Chat-Eingabe -->
+            <div class="chat-input">
+                <div class="input-group">
+                    <input type="text" id="messageInput" class="message-input" placeholder="Stelle eine Frage..." disabled>
+                    <button id="sendBtn" class="send-btn" disabled>Senden</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Benachrichtigungs-Container -->
+    <div id="notification" class="notification"></div>
+
+    <script src="script.js"></script>
+</body>
+</html>

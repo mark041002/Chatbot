@@ -71,15 +71,6 @@ def initialize_components():
 # Globale Komponenten
 processor, vektor_store, chat_handler = initialize_components()
 
-# Static Files (HTML, CSS, JS)
-app.mount("/static", StaticFiles(directory="static"), name="static")
-
-
-@app.get("/")
-async def read_root():
-    """Serve HTML page"""
-    return FileResponse("static/index.html")
-
 
 @app.post("/api/chat", response_model=ChatResponse)
 async def chat_endpoint(request: ChatRequest):
@@ -242,9 +233,6 @@ async def health_check():
 
 if __name__ == "__main__":
     print("🚀 Starte Lokaler KI-Chatbot API Server...")
-    print("📖 API Dokumentation: http://localhost:8000/docs")
-    print("🌐 Website: http://localhost:8000")
-
     uvicorn.run(
         "api_server:app",
         host="0.0.0.0",
