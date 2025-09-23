@@ -83,23 +83,23 @@ def main():
     """
     Hauptfunktion der Streamlit-App
     """
-    st.title("🤖 Lokaler KI-Chatbot (API Version)")
+    st.title("Lokaler KI-Chatbot (API Version)")
 
     # Sidebar für System-Management
     with st.sidebar:
-        st.header("🔧 System-Status")
+        st.header("System-Status")
 
         # API und Ollama Status prüfen
         health = api_request('GET', '/api/health')
 
         if health.get('api_status') == 'healthy' and 'error' not in health:
-            st.success("✅ API verbunden")
+            st.success("API verbunden")
 
             if health.get('ollama_available'):
-                st.success("✅ Ollama verfügbar")
+                st.success("Ollama verfügbar")
 
                 # Model-Verwaltung
-                st.subheader("🧠 Model-Verwaltung")
+                st.subheader("Model-Verwaltung")
                 models_info = api_request('GET', '/api/models')
 
                 if 'error' not in models_info and models_info.get('models'):
@@ -121,15 +121,15 @@ def main():
                                 st.error(f"Fehler: {result['error']}")
 
                 else:
-                    st.warning("⚠️ Keine Modelle verfügbar")
+                    st.warning("Keine Modelle verfügbar")
                     if 'error' in models_info:
                         st.error(models_info['error'])
                     st.info("Installiere ein Model: `ollama pull llama3`")
             else:
-                st.error("❌ Ollama nicht verfügbar")
+                st.error("Ollama nicht verfügbar")
                 st.info("Starte Ollama: `ollama serve`")
         else:
-            st.error("❌ API nicht erreichbar")
+            st.error("API nicht erreichbar")
             if 'error' in health:
                 st.error(f"Fehler: {health['error']}")
             st.info("Starte die API: `python api_server.py`")
@@ -153,14 +153,14 @@ def main():
                 result = api_request('POST', '/api/upload', files=files)
 
                 if 'error' not in result:
-                    st.success(f"✅ {result.get('message', 'Dokument erfolgreich hochgeladen')}")
+                    st.success(f"{result.get('message', 'Dokument erfolgreich hochgeladen')}")
                     st.info(f"Chunks erstellt: {result.get('chunks_created', 'N/A')}")
                     st.rerun()
                 else:
-                    st.error(f"❌ Fehler: {result['error']}")
+                    st.error(f"Fehler: {result['error']}")
 
         # Verfügbare Dokumente
-        st.subheader("📚 Verfügbare Dokumente")
+        st.subheader("Verfügbare Dokumente")
         documents_info = api_request('GET', '/api/documents')
 
         if 'error' not in documents_info and documents_info.get('documents'):
@@ -210,7 +210,7 @@ def main():
         if not st.session_state.chat_messages:
             st.markdown("""
             <div class="chat-message assistant-message">
-                <strong>🤖 Assistent:</strong> Hallo! Ich bin dein KI-Assistent. 
+                <strong>Assistent:</strong> Hallo! Ich bin dein KI-Assistent. 
                 Stelle Fragen oder lade Dokumente hoch, um zu beginnen!
             </div>
             """, unsafe_allow_html=True)
@@ -230,7 +230,7 @@ def main():
 
                 st.markdown(f"""
                 <div class="chat-message assistant-message">
-                    <strong>🤖 Assistent:</strong> {msg["content"]}
+                    <strong>Assistent:</strong> {msg["content"]}
                     {sources_html}
                 </div>
                 """, unsafe_allow_html=True)
@@ -260,39 +260,39 @@ def main():
 
                     # Tools-Info anzeigen (Debug)
                     if chat_result.get("tools_used"):
-                        st.caption(f"🔧 Tools: {', '.join(chat_result['tools_used'])}")
+                        st.caption(f"Tools: {', '.join(chat_result['tools_used'])}")
                 else:
                     # Fehler-Nachricht hinzufügen
                     st.session_state.chat_messages.append({
                         "role": "assistant",
-                        "content": f"❌ Fehler: {chat_result['error']}",
+                        "content": f"Fehler: {chat_result['error']}",
                         "sources": []
                     })
 
             st.rerun()
 
         elif user_input:
-            st.error("⚠️ Ollama ist nicht verfügbar. Starte zuerst Ollama!")
+            st.error("⚠Ollama ist nicht verfügbar. Starte zuerst Ollama!")
 
     with col2:
-        st.header("📊 Status")
+        st.header("Status")
 
         # Statistiken anzeigen
         if health.get('api_status') == 'healthy' and 'error' not in health:
-            st.metric("📄 Dokumente", health.get('document_count', 0))
-            st.metric("💬 Nachrichten", len(st.session_state.get('chat_messages', [])))
+            st.metric("Dokumente", health.get('document_count', 0))
+            st.metric("Nachrichten", len(st.session_state.get('chat_messages', [])))
 
             if health.get('current_model'):
                 model_display = health['current_model'].split(':')[0]
-                st.metric("🧠 Model", model_display)
+                st.metric("Model", model_display)
 
         # Chat zurücksetzen
-        if st.button("🗑️ Chat löschen"):
+        if st.button("Chat löschen"):
             st.session_state.chat_messages = []
             st.rerun()
 
         # Beispiel-Fragen
-        st.subheader("🎯 Beispiele")
+        st.subheader("Beispiele")
         examples = [
             "Was kannst du?",
             "Welche Dokumente sind verfügbar?",
@@ -320,7 +320,7 @@ def main():
                     else:
                         st.session_state.chat_messages.append({
                             "role": "assistant",
-                            "content": f"❌ Fehler: {chat_result['error']}",
+                            "content": f" Fehler: {chat_result['error']}",
                             "sources": []
                         })
 

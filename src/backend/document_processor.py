@@ -1,93 +1,152 @@
 """
-Document Processor - Verarbeitet verschiedene Dokumenttypen zu Text-Chunks
-Jetzt mit EasyOCR-Unterstützung für eingescannte PDFs (keine Tesseract Installation nötig!)
-
-Unterstützte Formate: PDF (mit OCR), DOCX, TXT
-Ausgabe: Text-Chunks für Vektordatenbank
+Document Processor mit OCR-Unterstützung und intelligenter Textverarbeitung
 """
 
 import PyPDF2
 import docx
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 import os
-import re
+from google.adk.tools import BaseTool
+import easyocr
+from pdf2image import convert_from_path
+import numpy as np
+OCR_AVAILABLE = True
 
-# OCR-Abhängigkeiten (EasyOCR - viel einfacher als Tesseract!)
-try:
-    import easyocr
-    from pdf2image import convert_from_path
-    from PIL import Image
-    import numpy as np
-    OCR_AVAILABLE = True
-except ImportError:
-    OCR_AVAILABLE = False
+
+
+class DokumentenSucheTool(BaseTool):
+    """Tool für semantische Dokumentensuche mit dem VektorStore"""
+
+    def __init__(self, vektor_store):
+        """
+        Initialisiert das Dokumentensuch-Tool.
+
+        Args:
+            vektor_store: Vektordatenbank für semantische Suche
+        """
+        self.vektor_store = vektor_store
+        super().__init__(
+            name="dokumente_suchen",
+            description="Sucht in verfügbaren Dokumenten nach relevanten Informationen."
+        )
+
+    def process_llm_request(self, query: str, dokument_name: Optional[str] = None, anzahl_ergebnisse: int = 5) -> Dict[str, Any]:
+        """
+        Führt semantische Dokumentensuche aus.
+
+        Args:
+            query (str): Suchbegriff oder -phrase
+            dokument_name (Optional[str]): Spezifisches Dokument für Suche
+            anzahl_ergebnisse (int): Maximale Anzahl Ergebnisse
+
+        Returns:
+            Dict[str, Any]: Suchergebnisse mit Relevanz-Scores
+        """
+        if dokument_name:
+            ergebnisse = self.vektor_store.nach_dokument_suchen(dokument_name, query, anzahl_ergebnisse)
+            if not ergebnisse:
+                ergebnisse = self.vektor_store.aehnliche_suchen(query, anzahl_ergebnisse)
+                return {
+                    "success": True,
+                    "message": f"Dokument '{dokument_name}' nicht gefunden. Allgemeine Suche durchgeführt.",
+                    "ergebnisse": ergebnisse,
+                    "anzahl_gefunden": len(ergebnisse)
+                }
+        else:
+            ergebnisse = self.vektor_store.aehnliche_suchen(query, anzahl_ergebnisse)
+
+        formatierte_ergebnisse = [
+            {
+                "dokument": ergebnis['dokument'],
+                "text": ergebnis['text'],
+                "relevanz": f"{(1 - ergebnis['distance']):.2f}"
+            }
+            for ergebnis in ergebnisse
+        ]
+
+        return {
+            "success": True,
+            "message": f"Gefunden: {len(ergebnisse)} relevante Abschnitte",
+            "ergebnisse": formatierte_ergebnisse,
+            "anzahl_gefunden": len(ergebnisse)
+        }
+
+
+class DokumentenListeTool(BaseTool):
+    """Tool zum Auflisten aller verfügbaren Dokumente"""
+
+    def __init__(self, vektor_store):
+        """
+        Initialisiert das Dokumentenlisten-Tool.
+
+        Args:
+            vektor_store: Vektordatenbank mit gespeicherten Dokumenten
+        """
+        self.vektor_store = vektor_store
+        super().__init__(
+            name="dokumente_auflisten",
+            description="Listet alle verfügbaren Dokumente auf."
+        )
+
+    def process_llm_request(self) -> Dict[str, Any]:
+        """
+        Listet alle verfügbaren Dokumente auf.
+
+        Returns:
+            Dict[str, Any]: Liste aller Dokumentnamen mit Anzahl
+        """
+        dokumente = self.vektor_store.verfuegbare_dokumente_auflisten()
+        return {
+            "success": True,
+            "dokumente": dokumente,
+            "anzahl": len(dokumente),
+            "message": f"Verfügbare Dokumente: {', '.join(dokumente) if dokumente else 'Keine'}"
+        }
 
 
 class DokumentProcessor:
-    """
-    Verarbeitet Dokumente und erstellt Text-Chunks für die Vektordatenbank
-    Jetzt mit automatischer EasyOCR-Erkennung für eingescannte PDFs
+    """Document Processor mit OCR-Unterstützung und intelligenter Textaufteilung"""
 
-    Args:
-        chunk_groesse: Maximale Größe der Text-Chunks in Zeichen
-        ocr_enabled: Ob OCR verwendet werden soll (default: True wenn verfügbar)
-    """
-
-    def __init__(self, chunk_groesse: int = 1000, ocr_enabled: bool = True):
+    def __init__(self, chunk_groesse: int = 1000, vektor_store=None):
         """
-        Initialisiert den Document Processor
+        Initialisiert den Document Processor.
 
         Args:
-            chunk_groesse: Maximale Anzahl Zeichen pro Chunk (default: 1000)
-            ocr_enabled: OCR aktivieren wenn verfügbar
+            chunk_groesse (int): Maximale Größe für Text-Chunks
+            vektor_store: Optionale Vektordatenbank für Suchfunktionen
         """
         self.chunk_groesse = chunk_groesse
-        self.ocr_enabled = ocr_enabled and OCR_AVAILABLE
+        self.vektor_store = vektor_store
+
+        self.search_tool = None
+        self.list_tool = None
+        if vektor_store:
+            self.search_tool = DokumentenSucheTool(vektor_store)
+            self.list_tool = DokumentenListeTool(vektor_store)
+
+        # OCR direkt initialisieren wenn verfügbar
         self.ocr_reader = None
-
-        if self.ocr_enabled:
+        if OCR_AVAILABLE:
             try:
-                print("Initialisiere EasyOCR (Deutsch + Englisch)...")
-                # EasyOCR Reader mit Deutsch und Englisch initialisieren
-                self.ocr_reader = easyocr.Reader(['de', 'en'], gpu=False)  # CPU-only für bessere Kompatibilität
-                print("EasyOCR erfolgreich initialisiert")
-            except Exception as e:
-                print(f"Fehler beim Initialisieren von EasyOCR: {e}")
-                self.ocr_enabled = False
+                self.ocr_reader = easyocr.Reader(['de', 'en'], gpu=False)
+            except Exception:
                 self.ocr_reader = None
-
-        if ocr_enabled and not OCR_AVAILABLE:
-            print("OCR-Bibliotheken nicht gefunden. Installiere: pip install easyocr pdf2image pillow")
 
     def dokument_verarbeiten(self, datei_pfad: str, dokument_name: str = None) -> Dict[str, Any]:
         """
-        Hauptfunktion: Verarbeitet ein Dokument vollständig
+        Verarbeitet ein Dokument vollständig zu Text-Chunks.
 
         Args:
-            datei_pfad: Pfad zur Datei
-            dokument_name: Optional - Name für das Dokument
+            datei_pfad (str): Pfad zur Dokumentdatei
+            dokument_name (str): Optionaler Name für das Dokument
 
         Returns:
-            Dict mit verarbeiteten Daten:
-            {
-                'dokument_name': str,
-                'chunks': List[str],
-                'chunk_anzahl': int,
-                'text_laenge': int,
-                'ocr_used': bool,  # NEU: Ob OCR verwendet wurde
-                'processing_info': str  # NEU: Info über Verarbeitung
-            }
+            Dict[str, Any]: Verarbeitungsresultate mit Chunks und Metadaten
         """
-        # Dokumentname bestimmen
         if not dokument_name:
             dokument_name = os.path.splitext(os.path.basename(datei_pfad))[0]
 
-        # Text extrahieren und chunken
-        result = self.text_extrahieren(datei_pfad)
-        text = result['text']
-        ocr_used = result.get('ocr_used', False)
-        processing_info = result.get('info', 'Standard-Textextraktion')
-
+        text, ocr_used = self.text_extrahieren(datei_pfad)
         chunks = self.text_chunken(text)
 
         return {
@@ -96,225 +155,253 @@ class DokumentProcessor:
             'chunk_anzahl': len(chunks),
             'text_laenge': len(text),
             'ocr_used': ocr_used,
-            'processing_info': processing_info
+            'processing_info': 'OCR verwendet' if ocr_used else 'Standard-Textextraktion'
         }
 
-    def text_extrahieren(self, datei_pfad: str) -> Dict[str, Any]:
+    def text_extrahieren(self, datei_pfad: str) -> tuple[str, bool]:
         """
-        Extrahiert Text aus verschiedenen Dateiformaten
-        Jetzt mit automatischer EasyOCR-Erkennung für PDFs
+        Extrahiert Text aus verschiedenen Dateiformaten mit automatischem OCR-Fallback.
 
         Args:
-            datei_pfad: Pfad zur Datei
+            datei_pfad (str): Pfad zur Datei
 
         Returns:
-            Dict mit Text und Verarbeitungsinfo:
-            {
-                'text': str,
-                'ocr_used': bool,
-                'info': str
-            }
-
-        Raises:
-            ValueError: Bei nicht unterstütztem Dateiformat
+            tuple[str, bool]: (Extrahierter Text, OCR verwendet)
         """
         erweiterung = os.path.splitext(datei_pfad)[1].lower()
 
         if erweiterung == '.pdf':
-            return self._pdf_text_extrahieren_mit_ocr(datei_pfad)
+            return self.pdf_verarbeiten(datei_pfad)
         elif erweiterung == '.docx':
-            text = self._docx_text_extrahieren(datei_pfad)
-            return {'text': text, 'ocr_used': False, 'info': 'DOCX-Textextraktion'}
+            return self.docx_text_extrahieren(datei_pfad), False
         elif erweiterung == '.txt':
-            text = self._txt_text_extrahieren(datei_pfad)
-            return {'text': text, 'ocr_used': False, 'info': 'TXT-Datei gelesen'}
+            return self.txt_text_extrahieren(datei_pfad), False
         else:
             raise ValueError(f"Nicht unterstütztes Dateiformat: {erweiterung}")
 
-    def _pdf_text_extrahieren_mit_ocr(self, datei_pfad: str) -> Dict[str, Any]:
+    def pdf_verarbeiten(self, datei_pfad: str) -> tuple[str, bool]:
         """
-        Extrahiert Text aus PDF mit automatischer EasyOCR-Erkennung
+        Verarbeitet PDF-Dateien mit automatischem OCR-Fallback für gescannte PDFs.
 
         Args:
-            datei_pfad: Pfad zur PDF-Datei
+            datei_pfad (str): Pfad zur PDF-Datei
 
         Returns:
-            Dict mit Text und OCR-Info
+            tuple[str, bool]: (Text, OCR verwendet)
         """
-        # Erst normale Textextraktion versuchen
-        standard_text = self._pdf_text_extrahieren(datei_pfad)
+        text = self.pdf_text_extrahieren(datei_pfad)
 
-        # Prüfen ob der Text "gut genug" ist
-        if self._ist_text_brauchbar(standard_text):
-            return {
-                'text': standard_text,
-                'ocr_used': False,
-                'info': 'PDF-Textextraktion (digitaler Text)'
-            }
+        # OCR anwenden wenn wenig Text extrahiert wurde und OCR verfügbar ist
+        if len(text.strip()) < 100 and self.ocr_reader is not None:
+            ocr_text = self.pdf_ocr(datei_pfad)
+            if len(ocr_text.strip()) > len(text.strip()):
+                return ocr_text, True
 
-        # Wenn EasyOCR verfügbar ist und Text schlecht → OCR verwenden
-        if self.ocr_enabled and self.ocr_reader:
-            print(f"📖 Erkenne eingescannten Text mit EasyOCR in {os.path.basename(datei_pfad)}...")
-            ocr_text = self._pdf_easyocr_extrahieren(datei_pfad)
+        return text, False
 
-            if len(ocr_text.strip()) > len(standard_text.strip()):
-                return {
-                    'text': ocr_text,
-                    'ocr_used': True,
-                    'info': 'EasyOCR-Texterkennung (eingescanntes PDF)'
-                }
-
-        # Fallback zum Standardtext
-        return {
-            'text': standard_text,
-            'ocr_used': False,
-            'info': 'PDF-Textextraktion (möglicherweise eingescannt, OCR nicht verfügbar)'
-        }
-
-    def _ist_text_brauchbar(self, text: str) -> bool:
+    def pdf_ocr(self, datei_pfad: str) -> str:
         """
-        Prüft ob extrahierter Text brauchbar ist oder OCR nötig ist
+        Führt OCR auf gescannten PDF-Seiten durch.
 
         Args:
-            text: Extrahierter Text
+            datei_pfad (str): Pfad zur PDF-Datei
 
         Returns:
-            True wenn Text brauchbar ist, False wenn OCR nötig
+            str: OCR-extrahierter Text
         """
-        text = text.strip()
-
-        # Zu wenig Text
-        if len(text) < 50:
-            return False
-
-        # Zu viele seltsame Zeichen (Hinweis auf schlechte Texterkennung)
-        seltsame_zeichen = sum(1 for c in text if ord(c) > 127 and c not in 'äöüßÄÖÜ')
-        if seltsame_zeichen / len(text) > 0.1:  # Mehr als 10% seltsame Zeichen
-            return False
-
-        # Zu wenige Leerzeichen (Hinweis auf zusammengeflossenen Text)
-        leerzeichen_ratio = text.count(' ') / len(text)
-        if leerzeichen_ratio < 0.1:  # Weniger als 10% Leerzeichen
-            return False
-
-        return True
-
-    def _pdf_easyocr_extrahieren(self, datei_pfad: str) -> str:
-        """
-        Extrahiert Text mit EasyOCR aus PDF
-
-        Args:
-            datei_pfad: Pfad zur PDF-Datei
-
-        Returns:
-            Mit EasyOCR extrahierter Text
-        """
-        if not self.ocr_enabled or not self.ocr_reader:
-            return ""
-
         try:
-            # PDF zu Bildern konvertieren
-            seiten = convert_from_path(datei_pfad, dpi=200)  # Niedrigere DPI für Geschwindigkeit
+            seiten = convert_from_path(datei_pfad, dpi=200, fmt='jpeg')
+            text = ""
 
-            ocr_text = ""
-            for i, seite in enumerate(seiten):
-                print(f"   EasyOCR Seite {i+1}/{len(seiten)}...")
+            for seite in seiten:
+                results = self.ocr_reader.readtext(np.array(seite))
 
-                # PIL Image zu numpy array konvertieren (für EasyOCR)
-                img_array = np.array(seite)
-
-                # EasyOCR auf das Bild anwenden
-                results = self.ocr_reader.readtext(img_array)
-
-                # Text aus EasyOCR-Ergebnissen extrahieren
                 seiten_text = ""
-                for (bbox, text, confidence) in results:
-                    # Nur Text mit ausreichender Konfidenz verwenden
-                    if confidence > 0.5:  # 50% Mindest-Konfidenz
-                        seiten_text += text + " "
+                for (bbox, erkannter_text, confidence) in results:
+                    if confidence > 0.4:
+                        seiten_text += erkannter_text + " "
 
-                ocr_text += seiten_text + "\n\n"
+                if seiten_text.strip():
+                    text += seiten_text + "\n\n"
 
-            print(f"EasyOCR abgeschlossen - {len(ocr_text)} Zeichen extrahiert")
-            return ocr_text
-
-        except Exception as e:
-            print(f"EasyOCR-Fehler: {e}")
+            return text
+        except Exception:
             return ""
 
     def text_chunken(self, text: str) -> List[str]:
         """
-        Teilt Text in kleinere, zusammenhängende Chunks auf
+        Teilt Text intelligent in semantisch sinnvolle Chunks auf.
 
         Args:
-            text: Zu chunkender Text
+            text (str): Zu aufteilender Text
 
         Returns:
-            Liste von Text-Chunks mit max. chunk_groesse Zeichen
+            List[str]: Liste von Text-Chunks
         """
-        # Text in Absätze aufteilen
+        if not text.strip():
+            return [""]
+
         absaetze = text.split('\n\n')
         chunks = []
         aktueller_chunk = ""
 
         for absatz in absaetze:
-            # Prüfen ob Absatz in aktuellen Chunk passt
-            if len(aktueller_chunk) + len(absatz) < self.chunk_groesse:
+            absatz = absatz.strip()
+            if not absatz:
+                continue
+
+            if len(aktueller_chunk) + len(absatz) + 2 < self.chunk_groesse:
                 aktueller_chunk += absatz + "\n\n"
             else:
-                # Aktuellen Chunk speichern und neuen beginnen
-                if aktueller_chunk:
+                if aktueller_chunk.strip():
                     chunks.append(aktueller_chunk.strip())
-                aktueller_chunk = absatz + "\n\n"
 
-        # Letzten Chunk hinzufügen
-        if aktueller_chunk:
+                if len(absatz) > self.chunk_groesse:
+                    teil_chunks = self._langen_text_aufteilen(absatz)
+                    chunks.extend(teil_chunks)
+                    aktueller_chunk = ""
+                else:
+                    aktueller_chunk = absatz + "\n\n"
+
+        if aktueller_chunk.strip():
+            chunks.append(aktueller_chunk.strip())
+
+        return chunks if chunks else [""]
+
+    def _langen_text_aufteilen(self, text: str) -> List[str]:
+        """
+        Teilt sehr lange Texte an Satzgrenzen auf.
+
+        Args:
+            text (str): Zu langer Text
+
+        Returns:
+            List[str]: Aufgeteilte Text-Chunks
+        """
+        chunks = []
+        aktueller_chunk = ""
+
+        saetze = text.replace('!', '.').replace('?', '.').split('.')
+
+        for satz in saetze:
+            satz = satz.strip()
+            if not satz:
+                continue
+
+            if len(aktueller_chunk) + len(satz) + 2 < self.chunk_groesse:
+                aktueller_chunk += satz + ". "
+            else:
+                if aktueller_chunk.strip():
+                    chunks.append(aktueller_chunk.strip())
+                aktueller_chunk = satz + ". "
+
+        if aktueller_chunk.strip():
             chunks.append(aktueller_chunk.strip())
 
         return chunks
 
-    def _pdf_text_extrahieren(self, datei_pfad: str) -> str:
-        """
-        Extrahiert Text aus PDF-Dateien (Standard-Methode)
-
-        Args:
-            datei_pfad: Pfad zur PDF-Datei
-
-        Returns:
-            Extrahierter Text
-        """
+    def pdf_text_extrahieren(self, datei_pfad: str) -> str:
+        """Extrahiert Text aus PDF-Dateien mit PyPDF2"""
         text = ""
-        with open(datei_pfad, 'rb') as datei:
-            pdf_reader = PyPDF2.PdfReader(datei)
-            for seite in pdf_reader.pages:
-                text += seite.extract_text() + "\n"
+        try:
+            with open(datei_pfad, 'rb') as datei:
+                pdf_reader = PyPDF2.PdfReader(datei)
+                for seite in pdf_reader.pages:
+                    seiten_text = seite.extract_text()
+                    if seiten_text.strip():
+                        text += seiten_text + "\n\n"
+        except Exception:
+            pass
         return text
 
-    def _docx_text_extrahieren(self, datei_pfad: str) -> str:
-        """
-        Extrahiert Text aus Word-Dokumenten
-
-        Args:
-            datei_pfad: Pfad zur DOCX-Datei
-
-        Returns:
-            Extrahierter Text
-        """
-        doc = docx.Document(datei_pfad)
+    def docx_text_extrahieren(self, datei_pfad: str) -> str:
+        """Extrahiert Text aus Word-Dokumenten"""
         text = ""
-        for paragraph in doc.paragraphs:
-            text += paragraph.text + "\n"
+        try:
+            doc = docx.Document(datei_pfad)
+            for paragraph in doc.paragraphs:
+                if paragraph.text.strip():
+                    text += paragraph.text + "\n\n"
+        except Exception:
+            pass
         return text
 
-    def _txt_text_extrahieren(self, datei_pfad: str) -> str:
+    def txt_text_extrahieren(self, datei_pfad: str) -> str:
+        """Liest Text-Dateien mit automatischem Encoding-Fallback"""
+        try:
+            with open(datei_pfad, 'r', encoding='utf-8') as datei:
+                return datei.read()
+        except UnicodeDecodeError:
+            try:
+                with open(datei_pfad, 'r', encoding='latin-1') as datei:
+                    return datei.read()
+            except Exception:
+                return ""
+        except Exception:
+            return ""
+
+    def search_documents(self, query: str, dokument_name: Optional[str] = None) -> Dict[str, Any]:
         """
-        Extrahiert Text aus Text-Dateien
+        Durchsucht Dokumente mit dem konfigurierten Suchtool.
 
         Args:
-            datei_pfad: Pfad zur TXT-Datei
+            query (str): Suchanfrage
+            dokument_name (Optional[str]): Spezifisches Dokument
 
         Returns:
-            Dateiinhalt als String
+            Dict[str, Any]: Suchergebnisse
         """
-        with open(datei_pfad, 'r', encoding='utf-8') as datei:
-            return datei.read()
+        if not self.search_tool:
+            return {"success": False, "message": "Suche nicht verfügbar"}
+        return self.search_tool.process_llm_request(query, dokument_name)
+
+    def list_documents(self) -> Dict[str, Any]:
+        """
+        Listet verfügbare Dokumente auf.
+
+        Returns:
+            Dict[str, Any]: Dokumentenliste
+        """
+        if not self.list_tool:
+            return {"success": False, "message": "Dokumentenliste nicht verfügbar"}
+        return self.list_tool.process_llm_request()
+
+    def format_search_results(self, ergebnisse: List[Dict]) -> str:
+        """
+        Formatiert Suchergebnisse für LLM-Verarbeitung.
+
+        Args:
+            ergebnisse (List[Dict]): Rohe Suchergebnisse
+
+        Returns:
+            str: Formatierte Ergebnisse für Prompt
+        """
+        if not ergebnisse:
+            return "Keine relevanten Dokumente gefunden."
+
+        formatted = []
+        for ergebnis in ergebnisse:
+            formatted.append(f"""
+---
+Dokument: {ergebnis['dokument']}
+Relevanz: {ergebnis['relevanz']}
+Inhalt: {ergebnis['text']}
+---
+            """)
+
+        return "\n".join(formatted)
+
+    def get_stats(self) -> Dict[str, Any]:
+        """
+        Gibt Statistiken und Konfiguration des Processors zurück.
+
+        Returns:
+            Dict[str, Any]: Processor-Statistiken und verfügbare Features
+        """
+        return {
+            "ocr_available": self.ocr_reader is not None,
+            "chunk_size": self.chunk_groesse,
+            "supported_formats": [".pdf", ".docx", ".txt"],
+            "ocr_languages": ["de", "en"] if self.ocr_reader is not None else [],
+            "search_available": self.search_tool is not None
+        }

@@ -1,176 +1,208 @@
 """
-Chat History Manager - Verwaltet Chat-Verläufe
+Chat History Manager mit SQLite-Datenbank für persistente Speicherung
 """
 
+import sqlite3
 import json
-import os
 from datetime import datetime
 from typing import List, Dict, Any, Optional
-from dataclasses import dataclass, asdict
-import uuid
-
-
-@dataclass
-class ChatMessage:
-    """Einzelne Chat-Nachricht"""
-    role: str  # 'user' oder 'assistant'
-    content: str
-    timestamp: str
-    sources: List[str] = None
-    tools_used: List[str] = None
-
-
-@dataclass
-class ChatSession:
-    """Komplette Chat-Session"""
-    session_id: str
-    title: str
-    created_at: str
-    updated_at: str
-    messages: List[ChatMessage]
+from models import ChatSession
 
 
 class ChatHistoryManager:
-    """Verwaltet Chat-Verläufe"""
+    """Chat History Manager mit SQLite für persistente Session-Verwaltung"""
 
-    def __init__(self, storage_path: str = "./data/chat_history"):
-        self.storage_path = storage_path
-        os.makedirs(storage_path, exist_ok=True)
-        self.sessions_file = os.path.join(storage_path, "sessions.json")
+    def __init__(self, db_path: str = "./data/vektor_db/chat_history.db"):
+        """
+        Initialisiert den Chat History Manager mit SQLite-Datenbank.
+
+        Args:
+            db_path (str): Pfad zur SQLite-Datenbankdatei
+        """
+        self.db_path = db_path
+        self._init_database()
+
+    def _init_database(self):
+        """
+        Erstellt die notwendigen Tabellen und Indizes für Chat-Sessions und Nachrichten.
+        """
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS chat_sessions (
+                    session_id TEXT PRIMARY KEY,
+                    title TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+            """)
+
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS chat_messages (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    session_id TEXT NOT NULL,
+                    role TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    timestamp TEXT NOT NULL,
+                    sources TEXT,
+                    tools_used TEXT,
+                    FOREIGN KEY (session_id) REFERENCES chat_sessions (session_id)
+                        ON DELETE CASCADE
+                )
+            """)
+
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_messages_session ON chat_messages(session_id)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_sessions_updated ON chat_sessions(updated_at)")
 
     def create_session(self, title: str = None) -> str:
-        """Erstellt eine neue Chat-Session"""
-        session_id = str(uuid.uuid4())
-        timestamp = datetime.now().isoformat()
+        """
+        Erstellt eine neue Chat-Session in der Datenbank.
 
-        if not title:
-            title = f"Chat vom {datetime.now().strftime('%d.%m.%Y %H:%M')}"
+        Args:
+            title (str): Optionaler Titel für die Session
 
-        session = ChatSession(
-            session_id=session_id,
-            title=title,
-            created_at=timestamp,
-            updated_at=timestamp,
-            messages=[]
-        )
+        Returns:
+            str: Eindeutige Session-ID
+        """
+        session = ChatSession.create_new(title)
 
-        self._save_session(session)
-        return session_id
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute("""
+                  INSERT INTO chat_sessions (session_id, title, created_at, updated_at)
+                  VALUES (?, ?, ?, ?)
+              """, (session.session_id, session.title, session.created_at, session.updated_at))
+
+        return session.session_id
 
     def add_message(self, session_id: str, role: str, content: str,
-                    sources: List[str] = None, tools_used: List[str] = None):
-        """Fügt eine Nachricht zur Session hinzu"""
-        session = self.get_session(session_id)
-        if not session:
-            return False
+                   sources: List[str] = None, tools_used: List[str] = None) -> bool:
+        """
+        Fügt eine neue Nachricht zu einer Session hinzu und aktualisiert Metadaten.
 
-        message = ChatMessage(
-            role=role,
-            content=content,
-            timestamp=datetime.now().isoformat(),
-            sources=sources or [],
-            tools_used=tools_used or []
-        )
+        Args:
+            session_id (str): ID der Session
+            role (str): 'user' oder 'assistant'
+            content (str): Nachrichteninhalt
+            sources (List[str]): Optionale Quellenangaben
+            tools_used (List[str]): Optionale verwendete Tools
 
-        session.messages.append(message)
-        session.updated_at = datetime.now().isoformat()
+        Returns:
+            bool: True wenn erfolgreich hinzugefügt
+        """
+        timestamp = datetime.now().isoformat()
+        sources_json = json.dumps(sources or [])
+        tools_json = json.dumps(tools_used or [])
 
-        # Titel automatisch aus erster Benutzer-Nachricht generieren
-        if len(session.messages) == 1 and role == "user":
-            session.title = content[:50] + "..." if len(content) > 50 else content
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute("""
+                INSERT INTO chat_messages 
+                (session_id, role, content, timestamp, sources, tools_used)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (session_id, role, content, timestamp, sources_json, tools_json))
 
-        self._save_session(session)
+            conn.execute(
+                "UPDATE chat_sessions SET updated_at = ? WHERE session_id = ?",
+                (timestamp, session_id)
+            )
+
+            # Titel automatisch aus erster Benutzer-Nachricht generieren
+            if role == "user":
+                message_count = conn.execute(
+                    "SELECT COUNT(*) FROM chat_messages WHERE session_id = ? AND role = 'user'",
+                    (session_id,)
+                ).fetchone()[0]
+
+                if message_count == 1:
+                    title = content[:50] + "..." if len(content) > 50 else content
+                    conn.execute(
+                        "UPDATE chat_sessions SET title = ? WHERE session_id = ?",
+                        (title, session_id)
+                    )
+
         return True
 
-    def get_session(self, session_id: str) -> Optional[ChatSession]:
-        """Lädt eine Chat-Session"""
-        try:
-            sessions = self._load_all_sessions()
-            for session_data in sessions:
-                if session_data['session_id'] == session_id:
-                    return self._dict_to_session(session_data)
-            return None
-        except:
-            return None
-
     def get_recent_sessions(self, limit: int = 5) -> List[Dict[str, Any]]:
-        """Gibt die letzten Chat-Sessions zurück"""
-        try:
-            sessions = self._load_all_sessions()
-            # Nach updated_at sortieren (neueste zuerst)
-            sessions.sort(key=lambda x: x['updated_at'], reverse=True)
+        """
+        Gibt die neuesten Chat-Sessions mit Nachrichtenzählung zurück.
 
-            # Nur Metadaten zurückgeben (ohne Nachrichten für Performance)
-            recent = []
-            for session_data in sessions[:limit]:
-                recent.append({
-                    'session_id': session_data['session_id'],
-                    'title': session_data['title'],
-                    'created_at': session_data['created_at'],
-                    'updated_at': session_data['updated_at'],
-                    'message_count': len(session_data['messages'])
+        Args:
+            limit (int): Maximale Anzahl zurückzugebender Sessions
+
+        Returns:
+            List[Dict]: Liste der Sessions mit Metadaten
+        """
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute("""
+                SELECT s.session_id, s.title, s.created_at, s.updated_at,
+                       COUNT(m.id) as message_count
+                FROM chat_sessions s
+                LEFT JOIN chat_messages m ON s.session_id = m.session_id
+                GROUP BY s.session_id
+                ORDER BY s.updated_at DESC
+                LIMIT ?
+            """, (limit,)).fetchall()
+
+            return [dict(row) for row in rows]
+
+    def get_session(self, session_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Lädt eine vollständige Session mit allen Nachrichten.
+
+        Args:
+            session_id (str): ID der zu ladenden Session
+
+        Returns:
+            Optional[Dict]: Session-Daten mit Nachrichten oder None
+        """
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+
+            session_row = conn.execute(
+                "SELECT * FROM chat_sessions WHERE session_id = ?",
+                (session_id,)
+            ).fetchone()
+
+            if not session_row:
+                return None
+
+            message_rows = conn.execute("""
+                SELECT role, content, timestamp, sources, tools_used
+                FROM chat_messages
+                WHERE session_id = ?
+                ORDER BY timestamp ASC
+            """, (session_id,)).fetchall()
+
+            messages = []
+            for row in message_rows:
+                messages.append({
+                    "role": row["role"],
+                    "content": row["content"],
+                    "timestamp": row["timestamp"],
+                    "sources": json.loads(row["sources"] or "[]"),
+                    "tools_used": json.loads(row["tools_used"] or "[]")
                 })
 
-            return recent
-        except:
-            return []
+            return {
+                "session_id": session_row["session_id"],
+                "title": session_row["title"],
+                "created_at": session_row["created_at"],
+                "updated_at": session_row["updated_at"],
+                "messages": messages
+            }
 
     def delete_session(self, session_id: str) -> bool:
-        """Löscht eine Chat-Session"""
-        try:
-            sessions = self._load_all_sessions()
-            sessions = [s for s in sessions if s['session_id'] != session_id]
-            self._save_all_sessions(sessions)
-            return True
-        except:
-            return False
+        """
+        Löscht eine Session und alle zugehörigen Nachrichten.
 
-    def _save_session(self, session: ChatSession):
-        """Speichert eine Session"""
-        sessions = self._load_all_sessions()
+        Args:
+            session_id (str): ID der zu löschenden Session
 
-        # Bestehende Session ersetzen oder neue hinzufügen
-        found = False
-        for i, existing in enumerate(sessions):
-            if existing['session_id'] == session.session_id:
-                sessions[i] = asdict(session)
-                found = True
-                break
-
-        if not found:
-            sessions.append(asdict(session))
-
-        # Nur die letzten 10 Sessions behalten (für Speicherplatz)
-        sessions.sort(key=lambda x: x['updated_at'], reverse=True)
-        sessions = sessions[:10]
-
-        self._save_all_sessions(sessions)
-
-    def _load_all_sessions(self) -> List[Dict]:
-        """Lädt alle Sessions"""
-        try:
-            if os.path.exists(self.sessions_file):
-                with open(self.sessions_file, 'r', encoding='utf-8') as f:
-                    return json.load(f)
-            return []
-        except:
-            return []
-
-    def _save_all_sessions(self, sessions: List[Dict]):
-        """Speichert alle Sessions"""
-        with open(self.sessions_file, 'w', encoding='utf-8') as f:
-            json.dump(sessions, f, ensure_ascii=False, indent=2)
-
-    def _dict_to_session(self, data: Dict) -> ChatSession:
-        """Konvertiert Dict zu ChatSession"""
-        messages = []
-        for msg_data in data['messages']:
-            messages.append(ChatMessage(**msg_data))
-
-        return ChatSession(
-            session_id=data['session_id'],
-            title=data['title'],
-            created_at=data['created_at'],
-            updated_at=data['updated_at'],
-            messages=messages
-        )
+        Returns:
+            bool: True wenn erfolgreich gelöscht
+        """
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.execute(
+                "DELETE FROM chat_sessions WHERE session_id = ?",
+                (session_id,)
+            )
+            return cursor.rowcount > 0

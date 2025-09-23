@@ -4,95 +4,54 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Lokaler KI-Chatbot</title>
-
-    <!-- Favicon Fix - Option 1: Data URL -->
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🤖</text></svg>">
-
     <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-    <!-- Hauptcontainer für die gesamte Anwendung -->
     <div class="container">
-        <!-- Sidebar mit Einstellungen und Dokumentenverwaltung -->
         <div class="sidebar">
             <h2>🤖 KI-Chatbot</h2>
-
-            <!-- Status-Anzeige für Ollama-Verbindung -->
             <div id="status" class="status offline">
                 <div class="status-dot"></div>
                 <span>Verbindung wird geprüft...</span>
             </div>
 
-            <!-- Chat-Verlauf Sektion -->
-            <div class="chat-history-section">
-                <h3>
-                    Chat-Verlauf
-                    <button id="toggleHistoryBtn" class="btn-toggle" title="Chat-Verlauf ein/ausklappen">
-                        <span class="toggle-icon">▼</span>
-                    </button>
-                </h3>
-                <div id="chatHistoryContainer" class="chat-history-container">
-                    <div class="chat-history-actions">
-                        <button id="newChatBtn" class="btn btn-primary btn-small">
-                            ➕ Neuer Chat
-                        </button>
-                    </div>
+            <div class="section">
+                <h3>Chat-Verlauf <button id="toggleHistoryBtn" class="btn-toggle"><span class="toggle-icon">▼</span></button></h3>
+                <div id="chatHistoryContainer">
+                    <button id="newChatBtn" class="btn btn-primary btn-small full-width">➕ Neuer Chat</button>
                     <div id="chatSessionsList" class="chat-sessions-list">
                         <div class="loading-sessions">Lade Chat-Verlauf...</div>
                     </div>
                 </div>
             </div>
 
-            <!-- Model-Auswahl -->
-            <h3>Model</h3>
-            <div class="form-group">
-                <select id="modelSelect" disabled>
-                    <option>Lade Modelle...</option>
-                </select>
-                <button id="testModelBtn" class="btn btn-secondary btn-small" style="margin-top: 8px; width: 100%;" disabled>
-                    Model testen
-                </button>
+            <div class="section">
+                <h3>Model</h3>
+                <select id="modelSelect" disabled><option>Lade Modelle...</option></select>
+                <button id="testModelBtn" class="btn btn-secondary btn-small full-width" disabled>Model testen</button>
             </div>
 
-            <!-- Dokument-Upload -->
-            <h3>Dokument hochladen</h3>
-            <div class="form-group">
+            <div class="section">
+                <h3>Dokument hochladen</h3>
                 <input type="file" id="fileUpload" accept=".pdf,.txt,.docx" disabled>
-                <button id="uploadBtn" class="btn btn-primary btn-small" style="margin-top: 8px; width: 100%;" disabled>
-                    Hochladen
-                </button>
-                <!-- OCR Status Anzeige -->
-                <div id="ocrStatus" class="ocr-status" style="display: none;">
-                    <div class="ocr-indicator">
-                        <span class="ocr-icon">👁️</span>
-                        <span>OCR verfügbar</span>
-                    </div>
-                </div>
+                <button id="uploadBtn" class="btn btn-primary btn-small full-width" disabled>Hochladen</button>
             </div>
 
-            <!-- Liste der hochgeladenen Dokumente -->
-            <h3>Dokumente</h3>
-            <ul id="documentList" class="document-list">
-                <li style="color: var(--gray-600); font-size: 14px; font-style: italic;">Lade Dokumente...</li>
-            </ul>
+            <div class="section">
+                <h3>Verarbeitete Dokumente</h3>
+                <ul id="documentList" class="document-list">
+                    <li class="loading">Lade Dokumente...</li>
+                </ul>
+            </div>
         </div>
 
-        <!-- Chat-Bereich -->
         <div class="chat-area">
-            <!-- Chat-Header -->
             <div class="chat-header">
-                <div class="chat-title">
-                    <h1 id="chatTitle">💬 Chat</h1>
-                    <span id="chatSessionInfo" class="chat-session-info"></span>
-                </div>
-                <div class="chat-header-actions">
-                    <button id="saveChatBtn" class="btn btn-secondary btn-small" style="display: none;">
-                        💾 Speichern
-                    </button>
-                </div>
+                <h1 id="chatTitle">💬 Chat</h1>
+                <span id="chatSessionInfo" class="chat-session-info">Gespeicherte Session</span>
             </div>
 
-            <!-- Nachrichten-Container -->
             <div class="chat-messages" id="chatMessages">
                 <div class="empty-state">
                     <h3>Willkommen beim lokalen KI-Chatbot</h3>
@@ -100,25 +59,17 @@
                 </div>
             </div>
 
-            <!-- Lade-Indikator -->
-            <div class="loading" id="loading">
-                🤖 Der Bot arbeitet...
-            </div>
+            <div class="loading" id="loading">Der Bot arbeitet...</div>
 
-            <!-- Chat-Eingabe -->
             <div class="chat-input">
-                <div class="input-group">
-                    <input type="text" id="messageInput" class="message-input" placeholder="Stelle eine Frage..." disabled>
-                    <button id="sendBtn" class="send-btn" disabled>Senden</button>
-                </div>
+                <input type="text" id="messageInput" placeholder="Stelle eine Frage..." disabled>
+                <button id="sendBtn" disabled>Senden</button>
             </div>
         </div>
     </div>
 
-    <!-- Benachrichtigungs-Container -->
     <div id="notification" class="notification"></div>
 
-    <!-- Bestätigungs-Modal -->
     <div id="confirmModal" class="modal">
         <div class="modal-content">
             <h3 id="modalTitle">Bestätigung</h3>

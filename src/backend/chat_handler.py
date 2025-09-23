@@ -1,689 +1,273 @@
-import requests
-import json
+"""
+Chat Handler - Intelligente Chat-Logik mit Dokumentensuche und Kontextverarbeitung
+"""
+
 import re
 from typing import Tuple, List, Dict, Any, Optional
 from google.adk.agents import LlmAgent
-from google.adk.tools import BaseTool, FunctionTool
-from google.adk.models import BaseLlm
 
-# Optional: Alternative Planner falls BuiltInPlanner Probleme macht
+from ollama_client import OllamaLLM
+
 try:
     from google.adk.planners import BuiltInPlanner
-
     PLANNER_AVAILABLE = True
 except ImportError:
     PLANNER_AVAILABLE = False
 
 
-class DokumentenSucheTool(BaseTool):
-    """
-    Tool für Dokumentensuche mit dem VektorStore
-    """
-
-    def __init__(self, vektor_store):
-        self.vektor_store = vektor_store
-        super().__init__(
-            name="dokumente_suchen",
-            description="Sucht in den verfügbaren Dokumenten nach relevanten Informationen. Nutze dieses Tool nur wenn der Benutzer explizit nach Informationen aus Dokumenten fragt oder wenn seine Frage sich auf spezifische Inhalte bezieht die in Dokumenten stehen könnten."
-        )
-
-    def process_llm_request(self, query: str, dokument_name: Optional[str] = None, anzahl_ergebnisse: int = 5) -> Dict[
-        str, Any]:
-        """
-        Führt die Dokumentensuche aus
-        """
-        try:
-            if dokument_name:
-                # Spezifische Dokumentensuche
-                ergebnisse = self.vektor_store.nach_dokument_suchen(dokument_name, query, anzahl_ergebnisse)
-                if not ergebnisse:
-                    # Fallback zu allgemeiner Suche
-                    ergebnisse = self.vektor_store.aehnliche_suchen(query, anzahl_ergebnisse)
-                    return {
-                        "success": True,
-                        "message": f"Dokument '{dokument_name}' nicht gefunden. Suche in allen Dokumenten durchgeführt.",
-                        "ergebnisse": ergebnisse,
-                        "anzahl_gefunden": len(ergebnisse)
-                    }
-            else:
-                # Allgemeine Suche
-                ergebnisse = self.vektor_store.aehnliche_suchen(query, anzahl_ergebnisse)
-
-            # Ergebnisse für LLM formatieren
-            formatierte_ergebnisse = []
-            for ergebnis in ergebnisse:
-                formatierte_ergebnisse.append({
-                    "dokument": ergebnis['dokument'],
-                    "text": ergebnis['text'],
-                    "relevanz": f"{(1 - ergebnis['distance']):.2f}"
-                })
-
-            return {
-                "success": True,
-                "message": f"Gefunden: {len(ergebnisse)} relevante Abschnitte",
-                "ergebnisse": formatierte_ergebnisse,
-                "anzahl_gefunden": len(ergebnisse)
-            }
-
-        except Exception as e:
-            return {
-                "success": False,
-                "message": f"Fehler bei der Suche: {str(e)}",
-                "ergebnisse": [],
-                "anzahl_gefunden": 0
-            }
-
-
-class DokumentenListeTool(BaseTool):
-    """
-    Tool zum Auflisten verfügbarer Dokumente
-    """
-
-    def __init__(self, vektor_store):
-        self.vektor_store = vektor_store
-        super().__init__(
-            name="dokumente_auflisten",
-            description="Listet alle verfügbaren Dokumente auf. Nutze dieses Tool nur wenn der Benutzer explizit wissen möchte welche Dokumente verfügbar sind."
-        )
-
-    def process_llm_request(self) -> Dict[str, Any]:
-        """
-        Listet verfügbare Dokumente auf
-        """
-        try:
-            dokumente = self.vektor_store.verfuegbare_dokumente_auflisten()
-            return {
-                "success": True,
-                "dokumente": dokumente,
-                "anzahl": len(dokumente),
-                "message": f"Verfügbare Dokumente: {', '.join(dokumente) if dokumente else 'Keine'}"
-            }
-        except Exception as e:
-            return {
-                "success": False,
-                "message": f"Fehler beim Laden der Dokumente: {str(e)}",
-                "dokumente": [],
-                "anzahl": 0
-            }
-
-
-class OllamaLLM(BaseLlm):
-    """
-    Ollama LLM Wrapper für Google ADK
-    """
-
-    def __init__(self, ollama_url: str = "http://localhost:11434", model: str = None):
-        # Verfügbare Modelle ermitteln
-        available_models = self._get_available_models(ollama_url)
-
-        # Falls kein Model angegeben wurde oder das angegebene Model nicht verfügbar ist,
-        # das erste verfügbare Model verwenden
-        if not model or model not in available_models:
-            if available_models:
-                model = available_models[0]
-                print(f"Verwende erstes verfügbares Model: {model}")
-            else:
-                # Fallback falls kein Model verfügbar ist
-                model = "llama3"
-                print("Warnung: Kein Model verfügbar, verwende Fallback 'llama3'")
-
-        # Zuerst BaseLlm mit model initialisieren
-        super().__init__(model=model)
-
-        # Dann unsere eigenen Attribute setzen
-        self._ollama_url = ollama_url
-        self._model_name = model
-
-    def _get_available_models(self, ollama_url: str) -> List[str]:
-        """
-        Ermittelt verfügbare Modelle von Ollama
-        """
-        try:
-            response = requests.get(f"{ollama_url}/api/tags", timeout=5)
-            if response.status_code == 200:
-                modelle = response.json().get("models", [])
-                return [model["name"] for model in modelle]
-            return []
-        except:
-            return []
-
-    @property
-    def ollama_url(self):
-        return self._ollama_url
-
-    @property
-    def model_name(self):
-        return self._model_name
-
-    @model_name.setter
-    def model_name(self, value):
-        self._model_name = value
-        # Auch das model attribute der Basisklasse aktualisieren
-        object.__setattr__(self, 'model', value)
-
-    def supported_models(self) -> List[str]:
-        """
-        Gibt unterstützte Modelle zurück
-        """
-        try:
-            response = requests.get(f"{self._ollama_url}/api/tags", timeout=5)
-            if response.status_code == 200:
-                modelle = response.json().get("models", [])
-                return [model["name"] for model in modelle]
-            return []
-        except:
-            return []
-
-    def connect(self):
-        """
-        Verbindung zu Ollama herstellen
-        """
-        try:
-            response = requests.get(f"{self._ollama_url}/api/tags", timeout=5)
-            return response.status_code == 200
-        except:
-            return False
-
-    async def generate_content_async(self, prompt: str, **kwargs) -> str:
-        """
-        Generiert Text mit Ollama (async wrapper)
-        """
-        return self.generate_content(prompt, **kwargs)
-
-    def generate_content(self, prompt: str, temperature: float = 0.7, max_tokens: int = 2048) -> str:
-        """
-        Generiert Text mit Ollama
-        """
-        try:
-            response = requests.post(
-                f"{self._ollama_url}/api/generate",
-                json={
-                    "model": self._model_name,
-                    "prompt": prompt,
-                    "stream": False,
-                    "options": {
-                        "temperature": temperature,
-                        "num_predict": max_tokens
-                    }
-                },
-                timeout=60
-            )
-
-            if response.status_code == 200:
-                return response.json()["response"]
-            else:
-                try:
-                    error_detail = response.json()
-                    return f"Ollama-Fehler {response.status_code}: {error_detail.get('error', 'Unbekannter Fehler')}"
-                except:
-                    return f"Ollama-Fehler {response.status_code}. Prüfe ob das Model '{self._model_name}' installiert ist."
-
-        except requests.exceptions.RequestException as e:
-            return f"Verbindungsfehler zu Ollama: {str(e)}. Stelle sicher dass 'ollama serve' läuft."
-
-
 class ChatHandlerADK:
-    """
-    Intelligenter Chat Handler mit Google ADK - Entscheidet automatisch wann Dokumentensuche nötig ist
-    """
+    """Chat Handler für intelligente Konversationsverarbeitung mit Dokumentenintegration"""
 
-    def __init__(self, vektor_store, ollama_url: str = "http://localhost:11434", model: str = None):
+    def __init__(self, vektor_store, ollama_url: str = "http://localhost:11434", model: str = "llama3"):
         """
-        Initialisiert den ADK-basierten Chat Handler
+        Initialisiert den Chat Handler mit allen notwendigen Komponenten.
 
         Args:
-            vektor_store: VektorStore Instanz für Dokumentensuche
-            ollama_url: URL des Ollama-Servers
-            model: Name des zu verwendenden Modells (falls None, wird das erste verfügbare gewählt)
+            vektor_store: Vektordatenbank für Dokumentensuche
+            ollama_url (str): URL des Ollama-Servers
+            model (str): Standard-LLM-Modell
         """
-        self.ollama_url = ollama_url
         self.vektor_store = vektor_store
-
-        # Ollama LLM initialisieren (wählt automatisch erstes verfügbares Model)
         self.llm = OllamaLLM(ollama_url, model)
-        self.model = self.llm.model_name
 
-        # Tools definieren
-        self.dokument_suche_tool = DokumentenSucheTool(vektor_store)
-        self.dokument_liste_tool = DokumentenListeTool(vektor_store)
+        from document_processor import DokumentProcessor
+        self.doc_processor = DokumentProcessor(vektor_store=vektor_store)
 
-        # Agent mit oder ohne Planner erstellen
-        agent_kwargs = {
-            "name": "IntelligenterAssistent",
-            "description": "Ein intelligenter Assistent für normale Unterhaltungen und dokumenten-basierte Fragen",
-            "instruction": self._system_prompt_erstellen(),
-            "model": self.llm,
-            "tools": [self.dokument_suche_tool, self.dokument_liste_tool]
-        }
+        self.agent = LlmAgent(
+            name="Assistent",
+            model=self.llm,
+            tools=[self.doc_processor.search_tool, self.doc_processor.list_tool]
+        )
 
-        # Planner nur hinzufügen wenn verfügbar
-        if PLANNER_AVAILABLE:
-            try:
-                agent_kwargs["planner"] = BuiltInPlanner(thinking_config=None)
-            except TypeError:
-                # Falls thinking_config nicht funktioniert, ohne Planner
-                pass
-
-        self.agent = LlmAgent(**agent_kwargs)
-
-    def _ist_faehigkeiten_frage(self, query: str) -> bool:
+    def _chat_history_formatieren(self, session_history: List[Dict[str, Any]], max_nachrichten: int = 8) -> str:
         """
-        Prüft ob nach den Fähigkeiten des Bots gefragt wird
+        Formatiert den Chat-Verlauf für die Kontextverarbeitung.
+
+        Args:
+            session_history (List[Dict]): Liste aller Nachrichten der Session
+            max_nachrichten (int): Maximale Anzahl zu berücksichtigender Nachrichten
+
+        Returns:
+            str: Formatierter Chat-Kontext für das LLM
         """
-        query_lower = query.lower()
-        faehigkeiten_keywords = [
-            'was kannst du', 'was kann der bot', 'deine fähigkeiten', 'was bietest du',
-            'hilfe', 'was machst du', 'funktionen', 'möglichkeiten',
-            'was geht', 'features', 'können sie', 'was ist möglich'
+        if not session_history:
+            return ""
+
+        recent_messages = session_history[-max_nachrichten:]
+        if not recent_messages:
+            return ""
+
+        formatted = "\n=== GESPRÄCH ===\n"
+        for msg in recent_messages:
+            role = "Du" if msg.get("role") == "user" else "Ich"
+            content = msg.get("content", "")
+            formatted += f"{role}: {content}\n"
+
+        return formatted + "=== AKTUELLE FRAGE ===\n"
+
+    def _ist_persoenliche_frage(self, query: str) -> bool:
+        """
+        Analysiert ob eine Frage persönlich/kontextbezogen ist.
+
+        Args:
+            query (str): Benutzeranfrage
+
+        Returns:
+            bool: True wenn die Frage Gesprächskontext benötigt
+        """
+        keywords = [
+            'wie heiße ich', 'mein name', 'vorhin', 'zuvor', 'was habe ich',
+            'erinnerst du dich', 'weißt du noch', 'wer bin ich', 'letzte frage'
         ]
-
-        return any(keyword in query_lower for keyword in faehigkeiten_keywords)
-
-    def _faehigkeiten_antwort_generieren(self) -> str:
-        """
-        Generiert eine Antwort über die Fähigkeiten des Bots
-        """
-        verfuegbare_docs = self.vektor_store.verfuegbare_dokumente_auflisten()
-        docs_info = f" Aktuell sind {len(verfuegbare_docs)} Dokumente verfügbar: {', '.join(verfuegbare_docs)}" if verfuegbare_docs else ""
-
-        return f"""Hallo! Ich bin dein KI-Assistent und kann dir auf verschiedene Weise helfen:
-
-🗣️ **Normale Unterhaltungen**
-- Fragen zu allen möglichen Themen beantworten
-- Erklärungen und Hilfestellungen geben
-- Tipps und Ratschläge anbieten
-- Einfach mit mir plaudern
-
-📄 **Dokumenten-Chat**
-- Du kannst Dokumente (PDF, Word, TXT) hochladen
-- Ich durchsuche dann diese Dokumente für dich
-- Beantworte Fragen basierend auf deinen Dokumenten
-- Nutze "#dokumentname Frage" für spezifische Suchen
-
-🔍 **Intelligente Suche**
-- Erkenne automatisch wann Dokumentensuche nötig ist
-- Finde relevante Informationen in deinen Dateien
-- Gebe Quellen zu meinen Antworten an
-
-{docs_info}
-
-Was möchtest du wissen oder wobei kann ich dir helfen?"""
+        return any(keyword in query.lower() for keyword in keywords)
 
     def _braucht_dokumentensuche(self, query: str) -> Tuple[bool, Optional[str]]:
         """
-        Analysiert ob eine Dokumentensuche nötig ist
+        Analysiert ob eine Anfrage Dokumentensuche benötigt und extrahiert Dokumentnamen.
+
+        Args:
+            query (str): Benutzeranfrage
 
         Returns:
-            Tuple (braucht_suche: bool, dokument_name: Optional[str])
+            Tuple[bool, Optional[str]]: (Suche nötig, spezifisches Dokument)
         """
         query_lower = query.lower()
 
-        # 1. Explizite Dokumentenreferenz mit #
+        # Explizite Dokumentreferenz mit #
         dokument_match = re.search(r'#(\w+)', query)
         if dokument_match:
             return True, dokument_match.group(1)
 
-        # 2. Verfügbare Dokumente abrufen für intelligente Erkennung
-        verfuegbare_docs = self.vektor_store.verfuegbare_dokumente_auflisten()
-
-        # 3. Dokument explizit erwähnt
-        for doc in verfuegbare_docs:
-            if doc.lower() in query_lower:
-                return True, doc
-
-        # 4. Keywords die auf Dokumentensuche hindeuten
+        # Dokumentbezogene Keywords
         dokument_keywords = [
-            'in den dokumenten', 'im dokument', 'in meinen dateien',
-            'laut dokument', 'steht geschrieben', 'im text',
-            'was sagt', 'findest du', 'suche nach',
-            'welche informationen', 'was steht über', 'erkläre aus'
+            'in den dokumenten', 'im dokument', 'laut dokument', 'steht geschrieben',
+            'welche dokumente', 'verfügbare dokumente', 'findest du', 'suche nach'
         ]
 
-        for keyword in dokument_keywords:
-            if keyword in query_lower:
-                return True, None
-
-        # 5. Frage nach verfügbaren Dokumenten
-        if any(phrase in query_lower for phrase in [
-            'welche dokumente', 'was für dokumente', 'verfügbare dokumente',
-            'dokumente sind', 'dateien hast du', 'was ist verfügbar'
-        ]):
+        if any(keyword in query_lower for keyword in dokument_keywords):
             return True, None
 
-        # 6. Spezifische/technische Begriffe die wahrscheinlich in Dokumenten stehen
-        # Diese werden durch LLM-Analyse ergänzt
-        if self._scheint_spezifisch(query):
+        # Komplexe Fragen automatisch durchsuchen
+        if len(query.split()) > 6:
             return True, None
 
         return False, None
 
-    def _scheint_spezifisch(self, query: str) -> bool:
+    def antwort_generieren(self, query: str, session_history: List[Dict[str, Any]] = None) -> Dict[str, Any]:
         """
-        Prüft ob die Frage spezifisch genug ist um in Dokumenten zu suchen
-        """
-        # Sehr allgemeine Fragen brauchen keine Dokumentensuche
-        allgemeine_fragen = [
-            'wie geht', 'was machst du', 'hallo', 'hi', 'guten tag',
-            'wie funktioniert', 'was ist', 'erkläre mir', 'kannst du',
-            'hilf mir', 'was sind', 'warum', 'weshalb', 'wieso'
-        ]
-
-        query_lower = query.lower()
-
-        # Wenn es eine sehr allgemeine Frage ist
-        for allgemein in allgemeine_fragen:
-            if query_lower.startswith(allgemein):
-                # Außer es folgen spezifische Begriffe
-                if len(query.split()) > 3:  # Längere Fragen könnten spezifisch sein
-                    continue
-                return False
-
-        # Wenn die Frage sehr spezifische Begriffe enthält
-        if len(query.split()) > 5:  # Längere Fragen sind oft spezifischer
-            return True
-
-        return False
-
-    def dokument_referenz_parsen(self, nachricht: str) -> Tuple[str, str]:
-        """
-        Parst Dokumentenreferenzen aus der Nachricht
+        Hauptfunktion für intelligente Antwortgenerierung mit Multi-Modus-Erkennung.
 
         Args:
-            nachricht: Benutzer-Nachricht
+            query (str): Benutzeranfrage
+            session_history (List[Dict]): Optionaler Chat-Verlauf für Kontext
 
         Returns:
-            Tuple (dokument_name oder None, bereinigte_nachricht)
+            Dict[str, Any]: Strukturierte Antwort mit Metadaten und verwendeten Tools
         """
-        match = re.search(r'#(\w+)', nachricht)
+        chat_kontext = self._chat_history_formatieren(session_history) if session_history else ""
 
-        if match:
-            dokument_name = match.group(1)
-            bereinigte_nachricht = re.sub(r'#\w+\s*', '', nachricht).strip()
-            return dokument_name, bereinigte_nachricht
-
-        return None, nachricht
-
-    def antwort_generieren(self, query: str) -> Dict[str, Any]:
-        """
-        Generiert eine intelligente Antwort - mit oder ohne Dokumentensuche
-
-        Args:
-            query: Benutzer-Query
-
-        Returns:
-            Dictionary mit Antwort und Metadaten
-        """
-        try:
-            # 1. Prüfen ob nach Fähigkeiten gefragt wird
-            if self._ist_faehigkeiten_frage(query):
-                return {
-                    "antwort": self._faehigkeiten_antwort_generieren(),
-                    "quellen": [],
-                    "verwendete_tools": [],
-                    "success": True,
-                    "modus": "faehigkeiten"
-                }
-
-            # 2. Prüfen ob Dokumentensuche nötig ist
-            braucht_suche, dokument_name = self._braucht_dokumentensuche(query)
-
-            if braucht_suche:
-                return self._antwort_mit_dokumenten(query, dokument_name)
-            else:
-                return self._normale_antwort(query)
-
-        except Exception as e:
+        # Fähigkeiten-Anfrage erkennen
+        if any(word in query.lower() for word in ['was kannst du', 'deine fähigkeiten', 'hilfe']):
             return {
-                "antwort": f"Fehler bei der Antwort-Generierung: {str(e)}",
+                "antwort": "Ich kann normale Fragen beantworten, in deinen Dokumenten suchen und mich an unser Gespräch erinnern. Was möchtest du wissen?",
                 "quellen": [],
                 "verwendete_tools": [],
-                "success": False
+                "success": True,
+                "modus": "faehigkeiten"
             }
 
-    def _normale_antwort(self, query: str) -> Dict[str, Any]:
-        """
-        Generiert eine normale Antwort ohne Dokumentensuche
-        """
-        # Prompt für normale Unterhaltung - OHNE THINKING
-        prompt = f"""Du bist ein hilfsreicher AI-Assistent. Beantworte die folgende Frage freundlich und hilfreich auf Deutsch. 
+        # Persönliche/Kontext-Fragen
+        if self._ist_persoenliche_frage(query):
+            if not chat_kontext:
+                antwort = "Entschuldigung, ich habe noch keinen Gesprächsverlauf mit dir."
+            else:
+                prompt = f"""{chat_kontext}
+Beantworte die Frage basierend auf unserem Gespräch: {query}
 
-WICHTIG: Gib KEINE Denkprozesse oder "thinking" aus. Antworte direkt und ohne Umschweife.
+Antwort:"""
+                antwort = self.llm.generate_content(prompt, temperature=0.7)
 
-Frage: {query}
+            return {
+                "antwort": antwort,
+                "quellen": [],
+                "verwendete_tools": ["chat_memory"],
+                "success": True,
+                "modus": "persoenlich"
+            }
+
+        # Dokumentensuche-Bedarf prüfen
+        braucht_suche, dokument_name = self._braucht_dokumentensuche(query)
+        if braucht_suche:
+            return self._antwort_mit_dokumenten(query, dokument_name, chat_kontext)
+
+        return self._normale_antwort(query, chat_kontext)
+
+    def _normale_antwort(self, query: str, chat_kontext: str = "") -> Dict[str, Any]:
+        """
+        Generiert normale Antworten ohne Dokumentensuche.
+
+        Args:
+            query (str): Benutzeranfrage
+            chat_kontext (str): Optionaler Gesprächskontext
+
+        Returns:
+            Dict[str, Any]: Standard-Antwort mit Kontext
+        """
+        prompt = f"""{chat_kontext if chat_kontext else "Du bist ein hilfsreicher Assistent."}
+Beantworte freundlich auf Deutsch: {query}
 
 Antwort:"""
 
         antwort = self.llm.generate_content(prompt, temperature=0.8)
-
-        # Bereinige mögliche "thinking" Reste
-        antwort = self._bereinige_thinking(antwort)
+        tools_used = ["chat_memory"] if chat_kontext else []
 
         return {
             "antwort": antwort,
             "quellen": [],
-            "verwendete_tools": [],
+            "verwendete_tools": tools_used,
             "success": True,
-            "modus": "normale_unterhaltung"
+            "modus": "normal"
         }
 
-    def _antwort_mit_dokumenten(self, query: str, dokument_name: Optional[str] = None) -> Dict[str, Any]:
+    def _antwort_mit_dokumenten(self, query: str, dokument_name: Optional[str] = None, chat_kontext: str = "") -> Dict[str, Any]:
         """
-        Generiert eine Antwort basierend auf Dokumentensuche
+        Generiert Antworten mit Dokumentensuche und Quellenangaben.
+
+        Args:
+            query (str): Benutzeranfrage
+            dokument_name (Optional[str]): Spezifisches Dokument für die Suche
+            chat_kontext (str): Gesprächskontext
+
+        Returns:
+            Dict[str, Any]: Antwort mit Dokumentenquellen und Suchmetadaten
         """
-        # Dokumentenreferenz parsen falls noch nicht geschehen
-        if not dokument_name:
-            dokument_name, query = self.dokument_referenz_parsen(query)
+        # Spezielle Behandlung für Dokumentenliste
+        if 'welche dokumente' in query.lower():
+            list_result = self.doc_processor.list_documents()
+            if list_result.get("success"):
+                dokumente = list_result.get("dokumente", [])
+                antwort = f"Verfügbare Dokumente: {', '.join(dokumente)}" if dokumente else "Keine Dokumente verfügbar."
+                return {
+                    "antwort": antwort,
+                    "quellen": dokumente,
+                    "verwendete_tools": ["dokumente_auflisten"],
+                    "success": True,
+                    "modus": "dokumentenliste"
+                }
 
-        # Spezielle Behandlung für "Dokumente auflisten"
-        if any(phrase in query.lower() for phrase in [
-            'welche dokumente', 'verfügbare dokumente', 'dokumente sind'
-        ]):
-            list_result = self.dokument_liste_tool.process_llm_request()
-
-            if list_result.get("success") and list_result.get("dokumente"):
-                dokumente_text = ", ".join(list_result["dokumente"])
-                antwort = f"Hier sind die verfügbaren Dokumente: {dokumente_text}"
-            else:
-                antwort = "Es sind derzeit keine Dokumente verfügbar."
-
-            return {
-                "antwort": antwort,
-                "quellen": list_result.get("dokumente", []),
-                "verwendete_tools": ["dokumente_auflisten"],
-                "success": True,
-                "modus": "dokumentensuche"
-            }
-
-        # Normale Dokumentensuche
-        search_result = self.dokument_suche_tool.process_llm_request(query, dokument_name)
-        verwendete_tools = ["dokumente_suchen"]
-        quellen = []
+        # Dokumentensuche durchführen
+        search_result = self.doc_processor.search_documents(query, dokument_name)
+        tools_used = ["dokumente_suchen"]
+        if chat_kontext:
+            tools_used.append("chat_memory")
 
         if search_result.get("success") and search_result.get("ergebnisse"):
-            # Quellen sammeln
-            for ergebnis in search_result["ergebnisse"]:
-                if ergebnis["dokument"] not in quellen:
-                    quellen.append(ergebnis["dokument"])
+            dokument_kontext = self.doc_processor.format_search_results(search_result["ergebnisse"])
+            quellen = list(set([erg["dokument"] for erg in search_result["ergebnisse"]]))
 
-            # Kontext für finale Antwort erstellen
-            kontext = self._format_search_results(search_result["ergebnisse"])
+            prompt = f"""{chat_kontext}
+DOKUMENT-KONTEXT:
+{dokument_kontext}
 
-            # Besserer Prompt mit verfügbaren Dokumenten - OHNE THINKING
-            verfuegbare_docs = self.vektor_store.verfuegbare_dokumente_auflisten()
-            docs_info = f"\nVerfügbare Dokumente: {', '.join(verfuegbare_docs)}" if verfuegbare_docs else ""
-
-            final_prompt = f"""Du bist ein hilfsreicher Assistent der Fragen basierend auf verfügbaren Dokumenten beantwortet.{docs_info}
-
-WICHTIG: Gib KEINE Denkprozesse oder "thinking" aus. Antworte direkt und ohne Umschweife auf Deutsch.
-
-GEFUNDENER KONTEXT AUS DOKUMENTEN:
-{kontext}
-
-BENUTZER-FRAGE: {query}
-
-Beantworte die Frage basierend auf dem gefundenen Kontext. Wenn der Kontext die Frage nicht vollständig beantwortet, sage das ehrlich und erkläre was du aus den verfügbaren Dokumenten weißt.
+Beantworte basierend auf den Dokumenten: {query}
 
 Antwort:"""
 
-            final_response = self.llm.generate_content(final_prompt)
-            final_response = self._bereinige_thinking(final_response)
+            antwort = self.llm.generate_content(prompt)
 
             return {
-                "antwort": final_response,
+                "antwort": antwort,
                 "quellen": quellen,
-                "verwendete_tools": verwendete_tools,
+                "verwendete_tools": tools_used,
                 "success": True,
                 "modus": "dokumentensuche"
             }
         else:
-            # Keine relevanten Dokumente gefunden
-            verfuegbare_docs = self.vektor_store.verfuegbare_dokumente_auflisten()
-
-            if verfuegbare_docs:
-                antwort = f"Ich konnte keine relevanten Informationen zu '{query}' in den verfügbaren Dokumenten finden. Verfügbare Dokumente: {', '.join(verfuegbare_docs)}"
-            else:
-                antwort = "Es sind derzeit keine Dokumente verfügbar, die ich durchsuchen könnte."
-
             return {
-                "antwort": antwort,
+                "antwort": "Keine relevanten Informationen in den Dokumenten gefunden.",
                 "quellen": [],
-                "verwendete_tools": verwendete_tools,
+                "verwendete_tools": tools_used,
                 "success": True,
                 "modus": "dokumentensuche_leer"
             }
 
-    def _bereinige_thinking(self, text: str) -> str:
-        """
-        Entfernt thinking-Texte und ähnliche Ausdrücke aus der Antwort
-        """
-        # Muster für thinking-Texte
-        thinking_patterns = [
-            r'<thinking>.*?</thinking>',
-            r'\*thinking\*.*?\*/thinking\*',
-            r'Ich denke\.\.\.',
-            r'Lass mich überlegen\.\.\.',
-            r'Hmm\.\.\.',
-            r'\*überlegt\*',
-            r'\[thinking\].*?\[/thinking\]',
-            r'Zunächst muss ich.*?überlegen',
-        ]
-
-        cleaned_text = text
-        for pattern in thinking_patterns:
-            cleaned_text = re.sub(pattern, '', cleaned_text, flags=re.DOTALL | re.IGNORECASE)
-
-        # Mehrfache Leerzeilen entfernen
-        cleaned_text = re.sub(r'\n\s*\n\s*\n', '\n\n', cleaned_text)
-
-        return cleaned_text.strip()
-
-    def _format_search_results(self, ergebnisse: List[Dict]) -> str:
-        """
-        Formatiert Suchergebnisse für das LLM
-        """
-        if not ergebnisse:
-            return "Keine relevanten Dokumente gefunden."
-
-        formatted = []
-        for ergebnis in ergebnisse:
-            formatted.append(f"""
----
-Dokument: {ergebnis['dokument']}
-Relevanz: {ergebnis['relevanz']}
-Inhalt: {ergebnis['text']}
----
-            """)
-
-        return "\n".join(formatted)
-
     def ollama_verfuegbar(self) -> bool:
-        """
-        Prüft ob Ollama erreichbar ist
-        """
-        return self.llm.connect()
+        """Prüft Ollama-Verfügbarkeit"""
+        return self.llm.is_available()
 
     def verfuegbare_modelle_auflisten(self) -> List[str]:
-        """
-        Listet verfügbare Ollama-Modelle auf
-        """
-        return self.llm.supported_models()
+        """Listet alle verfügbaren Ollama-Modelle auf"""
+        return self.llm.get_available_models()
 
     def model_testen(self, model_name: str) -> bool:
-        """
-        Testet ob ein Model funktioniert
-        """
-        try:
-            test_llm = OllamaLLM(self.ollama_url, model_name)
-            if not test_llm.connect():
-                return False
-
-            response = test_llm.generate_content("Test", max_tokens=1)
-            return "Ollama-Fehler" not in response and "Verbindungsfehler" not in response
-        except:
-            return False
+        """Testet ob ein Modell funktionsfähig ist"""
+        return self.llm.test_model(model_name)
 
     def model_wechseln(self, neues_model: str):
-        """
-        Wechselt das verwendete Ollama-Model
-        """
-        self.model = neues_model
-        self.llm.model_name = neues_model
+        """Wechselt zu einem neuen LLM-Modell"""
+        self.llm.switch_model(neues_model)
 
-        # Agent mit neuem Model neu erstellen
-        agent_kwargs = {
-            "name": "IntelligenterAssistent",
-            "description": "Ein intelligenter Assistent für normale Unterhaltungen und dokumenten-basierte Fragen",
-            "instruction": self._system_prompt_erstellen(),
-            "model": self.llm,
-            "tools": [self.dokument_suche_tool, self.dokument_liste_tool]
-        }
-
-        # Planner nur hinzufügen wenn verfügbar
-        if PLANNER_AVAILABLE:
-            try:
-                agent_kwargs["planner"] = BuiltInPlanner(thinking_config=None)
-            except TypeError:
-                pass
-
-        self.agent = LlmAgent(**agent_kwargs)
-
-    def _system_prompt_erstellen(self) -> str:
-        """
-        Erstellt den System-Prompt für den Agent
-        """
-        return """Du bist ein intelligenter AI-Assistent der sowohl normale Unterhaltungen führen als auch dokumenten-basierte Fragen beantworten kann.
-
-WICHTIG: Gib NIEMALS Denkprozesse, "thinking", Überlegungen oder ähnliches aus. Antworte immer direkt und ohne Umschweife auf Deutsch.
-
-DEINE FÄHIGKEITEN:
-- Normale Unterhaltungen ohne Dokumentensuche
-- Durchsuche Dokumente mit dem "dokumente_suchen" Tool NUR wenn nötig
-- Liste verfügbare Dokumente mit "dokumente_auflisten" auf NUR wenn explizit danach gefragt
-- Erkläre deine Fähigkeiten wenn danach gefragt wird
-
-WANN DOKUMENTE NUTZEN:
-- Nur wenn der Benutzer explizit nach Informationen aus Dokumenten fragt
-- Wenn spezifische Dokumentnamen erwähnt werden (#dokumentname)
-- Wenn nach verfügbaren Dokumenten gefragt wird
-- Bei sehr spezifischen Fragen die wahrscheinlich in Dokumenten stehen
-
-WANN KEINE DOKUMENTE NUTZEN:
-- Bei normalen Unterhaltungen (Hallo, Wie geht's, etc.)
-- Bei allgemeinen Wissensfragen
-- Bei persönlichen Gesprächen
-- Bei Fragen nach deinen Fähigkeiten
-- Wenn keine Dokumente relevant sind
-
-ARBEITSWEISE:
-1. Entscheide ZUERST ob Dokumentensuche nötig ist
-2. Für normale Fragen → Antworte direkt und freundlich
-3. Für dokumenten-basierte Fragen → Nutze entsprechende Tools
-4. Sei immer ehrlich wenn du keine relevanten Informationen findest
-
-REGELN:
-- Nutze Tools nur wenn wirklich nötig
-- Sei freundlich und hilfsreich
-- Antworte auf Deutsch
-- Gib Quellen an wenn du Dokumente nutzt
-- NIEMALS thinking oder Denkprozesse ausgeben
-- Direkte, klare Antworten ohne Umschweife"""
+    @property
+    def model(self):
+        """Gibt das aktuell verwendete Modell zurück"""
+        return self.llm.model_name

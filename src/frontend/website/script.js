@@ -1,355 +1,342 @@
-// API Basis-URL
 const API_BASE = 'http://127.0.0.1:8000';
 
-// DOM-Elemente
-const statusEl = document.getElementById('status');
-const modelSelect = document.getElementById('modelSelect');
-const testModelBtn = document.getElementById('testModelBtn');
-const fileUpload = document.getElementById('fileUpload');
-const uploadBtn = document.getElementById('uploadBtn');
-const ocrStatus = document.getElementById('ocrStatus');
-const documentList = document.getElementById('documentList');
-const chatMessages = document.getElementById('chatMessages');
-const messageInput = document.getElementById('messageInput');
-const sendBtn = document.getElementById('sendBtn');
-const loading = document.getElementById('loading');
-const notification = document.getElementById('notification');
+// DOM Elements - alle auf einmal holen
+const elements = {
+    status: document.getElementById('status'),
+    modelSelect: document.getElementById('modelSelect'),
+    testModelBtn: document.getElementById('testModelBtn'),
+    fileUpload: document.getElementById('fileUpload'),
+    uploadBtn: document.getElementById('uploadBtn'),
+    documentList: document.getElementById('documentList'),
+    chatMessages: document.getElementById('chatMessages'),
+    messageInput: document.getElementById('messageInput'),
+    sendBtn: document.getElementById('sendBtn'),
+    loading: document.getElementById('loading'),
+    notification: document.getElementById('notification'),
+    toggleHistoryBtn: document.getElementById('toggleHistoryBtn'),
+    chatHistoryContainer: document.getElementById('chatHistoryContainer'),
+    newChatBtn: document.getElementById('newChatBtn'),
+    chatSessionsList: document.getElementById('chatSessionsList'),
+    chatTitle: document.getElementById('chatTitle'),
+    chatSessionInfo: document.getElementById('chatSessionInfo'),
+    confirmModal: document.getElementById('confirmModal'),
+    modalTitle: document.getElementById('modalTitle'),
+    modalMessage: document.getElementById('modalMessage'),
+    modalCancelBtn: document.getElementById('modalCancelBtn'),
+    modalConfirmBtn: document.getElementById('modalConfirmBtn')
+};
 
-// Chat-Verlauf Elemente
-const toggleHistoryBtn = document.getElementById('toggleHistoryBtn');
-const chatHistoryContainer = document.getElementById('chatHistoryContainer');
-const newChatBtn = document.getElementById('newChatBtn');
-const chatSessionsList = document.getElementById('chatSessionsList');
-const chatTitle = document.getElementById('chatTitle');
-const chatSessionInfo = document.getElementById('chatSessionInfo');
-const saveChatBtn = document.getElementById('saveChatBtn');
+// State
+let state = {
+    currentModel: '',
+    currentSessionId: null,
+    chatHistoryExpanded: true,
+    pendingModalAction: null
+};
 
-// Modal Elemente
-const confirmModal = document.getElementById('confirmModal');
-const modalTitle = document.getElementById('modalTitle');
-const modalMessage = document.getElementById('modalMessage');
-const modalCancelBtn = document.getElementById('modalCancelBtn');
-const modalConfirmBtn = document.getElementById('modalConfirmBtn');
+// Utility Functions
+const api = {
+    async get(endpoint) {
+        const response = await fetch(`${API_BASE}${endpoint}`);
+        return response.json();
+    },
+    async post(endpoint, data = {}) {
+        const response = await fetch(`${API_BASE}${endpoint}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+        });
+        return { response, data: await response.json() };
+    },
+    async delete(endpoint) {
+        const response = await fetch(`${API_BASE}${endpoint}`, { method: 'DELETE' });
+        return response.json();
+    },
+    async upload(file) {
+        const formData = new FormData();
+        formData.append('file', file);
+        const response = await fetch(`${API_BASE}/api/upload`, {
+            method: 'POST',
+            body: formData
+        });
+        return { response, data: await response.json() };
+    }
+};
 
-// Anwendungszustand
-let isInitialized = false;
-let currentModel = '';
-let currentSessionId = null;
-let chatHistoryExpanded = true;
-let pendingModalAction = null;
+const ui = {
+    show: (element) => element.style.display = 'block',
+    hide: (element) => element.style.display = 'none',
+    toggle: (element) => element.style.display = element.style.display === 'none' ? 'block' : 'none',
+    setHtml: (element, html) => element.innerHTML = html,
+    addClass: (element, className) => element.classList.add(className),
+    removeClass: (element, className) => element.classList.remove(className),
+    notify: (message, type = 'success') => {
+        elements.notification.textContent = message;
+        elements.notification.className = `notification ${type} show`;
+        setTimeout(() => elements.notification.classList.remove('show'), 5000);
+    },
+    setButtonState: (button, disabled, text) => {
+        button.disabled = disabled;
+        if (text) button.textContent = text;
+    },
+    createListItem: (content, className = '') => {
+        const li = document.createElement('li');
+        if (className) li.className = className;
+        li.innerHTML = content;
+        return li;
+    }
+};
 
-/**
- * Initialisiert die Anwendung
- * Prüft API-Gesundheit, lädt Modelle, Dokumente und Chat-Verlauf
- */
+// Core Functions
 async function initialize() {
     try {
-        await checkHealth();
-        await loadModels();
-        await loadDocuments();
-        await loadChatHistory();
-        enableInterface();
-        isInitialized = true;
-
-        showNotification('Anwendung erfolgreich initialisiert', 'success');
+        await Promise.all([checkHealth(), loadModels(), loadDocuments(), loadChatHistory()]);
+        Object.values(elements).forEach(el => { if (el?.disabled !== undefined) el.disabled = false; });
+        ui.notify('Anwendung erfolgreich initialisiert');
     } catch (error) {
         console.error('Initialisierung fehlgeschlagen:', error);
-        showNotification('Fehler beim Initialisieren der Anwendung', 'error');
+        ui.notify('Fehler beim Initialisieren der Anwendung', 'error');
     }
 }
 
-/**
- * Prüft die API-Gesundheit und Ollama-Verfügbarkeit
- */
 async function checkHealth() {
-    const response = await fetch(`${API_BASE}/api/health`);
-    const data = await response.json();
+    const data = await api.get('/api/health');
+    const statusClass = data.ollama_available ? 'online' : 'offline';
+    const statusText = data.ollama_available ? 'Ollama verbunden' : 'Ollama nicht verfügbar';
 
-    if (data.ollama_available) {
-        statusEl.className = 'status online';
-        statusEl.innerHTML = '<div class="status-dot"></div><span>Ollama verbunden</span>';
-        currentModel = data.current_model || '';
+    elements.status.className = `status ${statusClass}`;
+    ui.setHtml(elements.status, `
+        <div class="status-dot"></div>
+        <span>${statusText}</span>
+        ${data.ollama_available ? `<small style="color: var(--gray-600); margin-left: 10px;">
+            ${data.uploaded_files_count} Dateien (${data.uploaded_files_size_mb} MB)
+        </small>` : ''}
+    `);
 
-        // OCR-Status anzeigen
-        if (data.features && data.features.ocr_support) {
-            ocrStatus.style.display = 'block';
-        }
-    } else {
-        statusEl.className = 'status offline';
-        statusEl.innerHTML = '<div class="status-dot"></div><span>Ollama nicht verfügbar</span>';
-        throw new Error('Ollama nicht verfügbar');
-    }
+    if (!data.ollama_available) throw new Error('Ollama nicht verfügbar');
+    state.currentModel = data.current_model || '';
 }
 
-/**
- * Lädt verfügbare Modelle von der API
- */
 async function loadModels() {
-    const response = await fetch(`${API_BASE}/api/models`);
-    const data = await response.json();
-
-    modelSelect.innerHTML = '';
-
-    if (data.models.length > 0) {
-        data.models.forEach(model => {
-            const option = document.createElement('option');
-            option.value = model;
-            option.textContent = model;
-            if (model === data.current_model) {
-                option.selected = true;
-            }
-            modelSelect.appendChild(option);
-        });
-    } else {
-        const option = document.createElement('option');
-        option.textContent = 'Keine Modelle verfügbar';
-        modelSelect.appendChild(option);
-    }
+    const data = await api.get('/api/models');
+    const options = data.models.length > 0
+        ? data.models.map(model => `<option value="${model}" ${model === data.current_model ? 'selected' : ''}>${model}</option>`).join('')
+        : '<option>Keine Modelle verfügbar</option>';
+    ui.setHtml(elements.modelSelect, options);
 }
 
-/**
- * Lädt hochgeladene Dokumente von der API
- */
 async function loadDocuments() {
-    const response = await fetch(`${API_BASE}/api/documents`);
-    const data = await response.json();
+    const data = await api.get('/api/documents');
+    const items = data.documents.length > 0
+        ? data.documents.map(doc => ui.createListItem(`
+            <span class="document-name">📄 ${doc}</span>
+            <button class="btn btn-danger btn-small" onclick="deleteDocument('${doc}')">🗑️</button>
+        `, 'document-item'))
+        : [ui.createListItem('Keine Dokumente vorhanden', '', 'color: var(--gray-600); font-size: 14px; font-style: italic;')];
 
-    documentList.innerHTML = '';
-
-    if (data.documents.length > 0) {
-        data.documents.forEach(doc => {
-            const li = document.createElement('li');
-            li.className = 'document-item';
-            li.innerHTML = `
-                <span class="document-name">📄 ${doc}</span>
-                <button class="btn btn-danger btn-small" onclick="deleteDocument('${doc}')">🗑️</button>
-            `;
-            documentList.appendChild(li);
-        });
-    } else {
-        const li = document.createElement('li');
-        li.style.cssText = 'color: var(--gray-600); font-size: 14px; font-style: italic;';
-        li.textContent = 'Keine Dokumente vorhanden';
-        documentList.appendChild(li);
-    }
+    elements.documentList.innerHTML = '';
+    items.forEach(item => elements.documentList.appendChild(item));
 }
 
-/**
- * Lädt Chat-Verlauf von der API
- */
 async function loadChatHistory() {
     try {
-        const response = await fetch(`${API_BASE}/api/chat/sessions`);
-
-        if (!response.ok) {
-            // Fallback wenn Chat-History nicht verfügbar
-            chatSessionsList.innerHTML = '<div class="no-sessions">Chat-Verlauf nicht verfügbar</div>';
-            return;
-        }
-
-        const sessions = await response.json();
-
-        chatSessionsList.innerHTML = '';
-
-        if (sessions.length > 0) {
-            sessions.forEach(session => {
-                const sessionEl = document.createElement('div');
-                sessionEl.className = 'chat-session-item';
-                sessionEl.innerHTML = `
+        const sessions = await api.get('/api/chat/sessions');
+        const items = sessions.length > 0
+            ? sessions.map(session => `
+                <div class="chat-session-item">
                     <div class="session-content" onclick="loadChatSession('${session.session_id}')">
                         <div class="session-title">${session.title}</div>
-                        <div class="session-meta">
-                            ${session.message_count} Nachrichten • 
-                            ${formatDate(session.updated_at)}
-                        </div>
+                        <div class="session-meta">${session.message_count} Nachrichten • ${formatDate(session.updated_at)}</div>
                     </div>
-                    <button class="btn btn-danger btn-tiny" onclick="deleteChatSession('${session.session_id}')" title="Löschen">
-                        🗑️
-                    </button>
-                `;
-                chatSessionsList.appendChild(sessionEl);
-            });
-        } else {
-            chatSessionsList.innerHTML = '<div class="no-sessions">Keine gespeicherten Chats</div>';
-        }
+                    <button class="btn btn-danger btn-tiny" onclick="deleteChatSession('${session.session_id}')" title="Löschen">🗑️</button>
+                </div>
+            `).join('')
+            : '<div class="no-sessions">Keine gespeicherten Chats</div>';
+
+        ui.setHtml(elements.chatSessionsList, items);
     } catch (error) {
-        console.error('Fehler beim Laden des Chat-Verlaufs:', error);
-        chatSessionsList.innerHTML = '<div class="no-sessions">Fehler beim Laden</div>';
+        ui.setHtml(elements.chatSessionsList, '<div class="no-sessions">Fehler beim Laden</div>');
     }
 }
 
-/**
- * Lädt eine spezifische Chat-Session
- */
+// Chat Functions
 async function loadChatSession(sessionId) {
     try {
-        const response = await fetch(`${API_BASE}/api/chat/sessions/${sessionId}`);
-
-        if (!response.ok) {
-            showNotification('Fehler beim Laden der Chat-Session', 'error');
-            return;
-        }
-
-        const session = await response.json();
-
-        // Chat leeren
-        chatMessages.innerHTML = '';
-
-        // Nachrichten laden
-        session.messages.forEach(message => {
-            addMessage(message.content, message.role, message.sources || []);
-        });
-
-        // Session-Info aktualisieren
-        currentSessionId = sessionId;
+        const session = await api.get(`/api/chat/sessions/${sessionId}`);
+        ui.setHtml(elements.chatMessages, '');
+        session.messages.forEach(msg => addMessage(msg.content, msg.role, msg.sources || []));
+        state.currentSessionId = sessionId;
         updateChatHeader(session.title);
-
-        showNotification('Chat-Session geladen', 'success');
-
+        ui.notify('Chat-Session geladen');
     } catch (error) {
-        console.error('Fehler beim Laden der Session:', error);
-        showNotification('Fehler beim Laden der Chat-Session', 'error');
+        ui.notify('Fehler beim Laden der Chat-Session', 'error');
     }
 }
 
-/**
- * Erstellt eine neue Chat-Session
- */
 async function createNewChatSession() {
     try {
-        const response = await fetch(`${API_BASE}/api/chat/sessions`, {
-            method: 'POST'
-        });
-
+        const { response, data } = await api.post('/api/chat/sessions');
         if (response.ok) {
-            const data = await response.json();
-            currentSessionId = data.session_id;
-            clearChat();
-            updateChatHeader();
+            state.currentSessionId = data.session_id;
             await loadChatHistory();
-            showNotification('Neue Chat-Session erstellt', 'success');
-        } else {
-            // Fallback: Session wird beim ersten Chat erstellt
-            currentSessionId = null;
-            clearChat();
-            updateChatHeader();
+            ui.notify('Neue Chat-Session erstellt');
         }
+        clearChat();
+        updateChatHeader();
     } catch (error) {
-        console.error('Fehler beim Erstellen einer neuen Session:', error);
-        // Fallback: Lokaler Neustart
-        currentSessionId = null;
+        state.currentSessionId = null;
         clearChat();
         updateChatHeader();
     }
 }
 
-/**
- * Löscht eine Chat-Session
- */
 async function deleteChatSession(sessionId) {
-    const isCurrentSession = sessionId === currentSessionId;
-    const message = isCurrentSession
-        ? 'Diese Chat-Session ist aktuell aktiv. Wirklich löschen?'
-        : 'Chat-Session wirklich löschen?';
-
-    const confirmed = await showConfirmModal('Chat löschen', message);
+    const isCurrentSession = sessionId === state.currentSessionId;
+    const confirmed = await showConfirmModal('Chat löschen',
+        isCurrentSession ? 'Diese Chat-Session ist aktuell aktiv. Wirklich löschen?' : 'Chat-Session wirklich löschen?');
 
     if (!confirmed) return;
 
     try {
-        const response = await fetch(`${API_BASE}/api/chat/sessions/${sessionId}`, {
-            method: 'DELETE'
-        });
+        await api.delete(`/api/chat/sessions/${sessionId}`);
+        if (isCurrentSession) {
+            state.currentSessionId = null;
+            clearChat();
+            updateChatHeader();
+        }
+        await loadChatHistory();
+        ui.notify('Chat-Session gelöscht');
+    } catch (error) {
+        ui.notify('Fehler beim Löschen der Chat-Session', 'error');
+    }
+}
 
-        if (response.ok) {
-            if (isCurrentSession) {
-                currentSessionId = null;
-                clearChat();
-                updateChatHeader();
+function updateChatHeader(title = null) {
+    elements.chatTitle.textContent = title ? `💬 ${title}` : '💬 Chat';
+    elements.chatSessionInfo.style.display = title ? 'block' : 'none';
+    if (title) elements.chatSessionInfo.textContent = 'Gespeicherte Session';
+}
+
+async function sendMessage() {
+    const message = elements.messageInput.value.trim();
+    if (!message) return;
+
+    addMessage(message, 'user');
+    elements.messageInput.value = '';
+    ui.addClass(elements.loading, 'show');
+    ui.setButtonState(elements.sendBtn, true);
+
+    try {
+        const requestBody = { message };
+        if (state.currentSessionId) requestBody.session_id = state.currentSessionId;
+
+        const { response, data } = await api.post('/api/chat', requestBody);
+
+        if (response.ok && data.success) {
+            addMessage(data.response, 'assistant', data.sources);
+            if (data.session_id && data.session_id !== state.currentSessionId) {
+                state.currentSessionId = data.session_id;
+                await loadChatHistory();
             }
-            await loadChatHistory();
-            showNotification('Chat-Session gelöscht', 'success');
         } else {
-            const error = await response.json();
-            showNotification(error.detail || 'Löschen fehlgeschlagen', 'error');
+            addMessage(data.detail || 'Fehler bei der Chat-Anfrage', 'assistant');
         }
     } catch (error) {
-        console.error('Fehler beim Löschen:', error);
-        showNotification('Fehler beim Löschen der Chat-Session', 'error');
+        addMessage('Verbindungsfehler zur API', 'assistant');
+    } finally {
+        ui.removeClass(elements.loading, 'show');
+        ui.setButtonState(elements.sendBtn, false);
+        elements.messageInput.focus();
     }
 }
 
-/**
- * Aktualisiert den Chat-Header
- */
-function updateChatHeader(title = null) {
-    if (title) {
-        chatTitle.textContent = `💬 ${title}`;
-        chatSessionInfo.textContent = 'Gespeicherte Session';
-        chatSessionInfo.style.display = 'block';
-    } else {
-        chatTitle.textContent = '💬 Chat';
-        chatSessionInfo.style.display = 'none';
+function addMessage(content, sender, sources = []) {
+    const emptyState = elements.chatMessages.querySelector('.empty-state');
+    if (emptyState) emptyState.remove();
+
+    const sourcesHtml = sources.length > 0 ? `<div class="message-sources">📄 Quellen: ${sources.join(', ')}</div>` : '';
+    const messageDiv = document.createElement('div');
+    messageDiv.className = `message ${sender}`;
+    messageDiv.innerHTML = `<div class="message-content">${content}</div>${sourcesHtml}`;
+
+    elements.chatMessages.appendChild(messageDiv);
+    elements.chatMessages.scrollTop = elements.chatMessages.scrollHeight;
+}
+
+function clearChat() {
+    ui.setHtml(elements.chatMessages, `
+        <div class="empty-state">
+            <h3>Willkommen beim lokalen KI-Chatbot</h3>
+            <p>Stelle eine Frage oder lade ein Dokument hoch, um zu beginnen.</p>
+        </div>
+    `);
+}
+
+// Document Functions
+async function uploadDocument() {
+    const file = elements.fileUpload.files[0];
+    if (!file) return ui.notify('Bitte wähle eine Datei aus', 'error');
+
+    ui.setButtonState(elements.uploadBtn, true, 'Lade hoch...');
+
+    try {
+        const { response, data } = await api.upload(file);
+        if (response.ok) {
+            let message = data.message;
+            if (data.ocr_used) message += ` (OCR verwendet: ${data.processing_info})`;
+            ui.notify(message);
+            await Promise.all([loadDocuments(), checkHealth()]);
+            elements.fileUpload.value = '';
+        } else {
+            ui.notify(data.detail || 'Upload fehlgeschlagen', 'error');
+        }
+    } catch (error) {
+        ui.notify('Fehler beim Hochladen', 'error');
+    } finally {
+        ui.setButtonState(elements.uploadBtn, false, 'Hochladen');
     }
 }
 
-/**
- * Aktiviert die Benutzeroberfläche nach erfolgreicher Initialisierung
- */
-function enableInterface() {
-    modelSelect.disabled = false;
-    testModelBtn.disabled = false;
-    fileUpload.disabled = false;
-    uploadBtn.disabled = false;
-    messageInput.disabled = false;
-    sendBtn.disabled = false;
-}
+async function deleteDocument(docName) {
+    const confirmed = await showConfirmModal('Dokument löschen',
+        `Dokument "${docName}" komplett löschen? (Aus Datenbank UND Upload-Ordner)`);
+    if (!confirmed) return;
 
-/**
- * Zeigt eine Benachrichtigung an
- * @param {string} message - Die anzuzeigende Nachricht
- * @param {string} type - Der Typ der Benachrichtigung ('success' oder 'error')
- */
-function showNotification(message, type = 'success') {
-    notification.textContent = message;
-    notification.className = `notification ${type} show`;
-
-    setTimeout(() => {
-        notification.classList.remove('show');
-    }, 5000);
-}
-
-/**
- * Zeigt ein Bestätigungs-Modal
- */
-function showConfirmModal(title, message) {
-    return new Promise((resolve) => {
-        modalTitle.textContent = title;
-        modalMessage.textContent = message;
-        confirmModal.style.display = 'flex';
-
-        pendingModalAction = resolve;
-    });
-}
-
-/**
- * Schließt das Bestätigungs-Modal
- */
-function closeConfirmModal(confirmed = false) {
-    confirmModal.style.display = 'none';
-    if (pendingModalAction) {
-        pendingModalAction(confirmed);
-        pendingModalAction = null;
+    try {
+        await api.delete(`/api/documents/${docName}`);
+        ui.notify('Dokument komplett gelöscht');
+        await Promise.all([loadDocuments(), checkHealth()]);
+    } catch (error) {
+        ui.notify('Fehler beim Löschen', 'error');
     }
 }
 
-/**
- * Formatiert ein Datum für die Anzeige
- */
+// Model Functions
+async function testModel() {
+    const model = elements.modelSelect.value;
+    if (!model) return;
+
+    ui.setButtonState(elements.testModelBtn, true, 'Teste...');
+
+    try {
+        const { response } = await api.post(`/api/models/${model}`);
+        if (response.ok) {
+            ui.notify('Model funktioniert!');
+            state.currentModel = model;
+        } else {
+            ui.notify('Model-Test fehlgeschlagen', 'error');
+        }
+    } catch (error) {
+        ui.notify('Fehler beim Testen des Models', 'error');
+    } finally {
+        ui.setButtonState(elements.testModelBtn, false, 'Model testen');
+    }
+}
+
+// Utility Functions
 function formatDate(dateString) {
     const date = new Date(dateString);
-    const now = new Date();
-    const diffMs = now - date;
+    const diffMs = new Date() - date;
     const diffMins = Math.floor(diffMs / 60000);
     const diffHours = Math.floor(diffMs / 3600000);
     const diffDays = Math.floor(diffMs / 86400000);
@@ -358,280 +345,66 @@ function formatDate(dateString) {
     if (diffMins < 60) return `vor ${diffMins} Min`;
     if (diffHours < 24) return `vor ${diffHours} Std`;
     if (diffDays < 7) return `vor ${diffDays} Tag${diffDays > 1 ? 'en' : ''}`;
-
     return date.toLocaleDateString('de-DE');
 }
 
-/**
- * Testet das aktuell ausgewählte Model
- */
-async function testModel() {
-    const model = modelSelect.value;
-    if (!model) return;
+function showConfirmModal(title, message) {
+    return new Promise((resolve) => {
+        elements.modalTitle.textContent = title;
+        elements.modalMessage.textContent = message;
+        ui.show(elements.confirmModal);
+        state.pendingModalAction = resolve;
+    });
+}
 
-    testModelBtn.disabled = true;
-    testModelBtn.textContent = 'Teste...';
-
-    try {
-        const response = await fetch(`${API_BASE}/api/models/${model}`, {
-            method: 'POST'
-        });
-
-        if (response.ok) {
-            showNotification('Model funktioniert!', 'success');
-            currentModel = model;
-        } else {
-            const error = await response.json();
-            showNotification(error.detail || 'Model-Test fehlgeschlagen', 'error');
-        }
-    } catch (error) {
-        showNotification('Fehler beim Testen des Models', 'error');
-    } finally {
-        testModelBtn.disabled = false;
-        testModelBtn.textContent = 'Model testen';
+function closeConfirmModal(confirmed = false) {
+    ui.hide(elements.confirmModal);
+    if (state.pendingModalAction) {
+        state.pendingModalAction(confirmed);
+        state.pendingModalAction = null;
     }
 }
 
-/**
- * Lädt ein Dokument hoch
- */
-async function uploadDocument() {
-    const file = fileUpload.files[0];
-    if (!file) {
-        showNotification('Bitte wähle eine Datei aus', 'error');
-        return;
-    }
-
-    uploadBtn.disabled = true;
-    uploadBtn.textContent = 'Lade hoch...';
-
-    const formData = new FormData();
-    formData.append('file', file);
-
-    try {
-        const response = await fetch(`${API_BASE}/api/upload`, {
-            method: 'POST',
-            body: formData
-        });
-
-        if (response.ok) {
-            const data = await response.json();
-            let message = data.message;
-
-            // OCR-Info hinzufügen falls verwendet
-            if (data.ocr_used) {
-                message += ` (OCR verwendet: ${data.processing_info})`;
-            }
-
-            showNotification(message, 'success');
-            await loadDocuments();
-            fileUpload.value = '';
-        } else {
-            const error = await response.json();
-            showNotification(error.detail || 'Upload fehlgeschlagen', 'error');
-        }
-    } catch (error) {
-        showNotification('Fehler beim Hochladen', 'error');
-    } finally {
-        uploadBtn.disabled = false;
-        uploadBtn.textContent = 'Hochladen';
-    }
-}
-
-/**
- * Löscht ein Dokument
- * @param {string} docName - Name des zu löschenden Dokuments
- */
-async function deleteDocument(docName) {
-    const confirmed = await showConfirmModal('Dokument löschen', `Dokument "${docName}" wirklich löschen?`);
-
-    if (!confirmed) return;
-
-    try {
-        const response = await fetch(`${API_BASE}/api/documents/${docName}`, {
-            method: 'DELETE'
-        });
-
-        if (response.ok) {
-            showNotification('Dokument gelöscht', 'success');
-            await loadDocuments();
-        } else {
-            const error = await response.json();
-            showNotification(error.detail || 'Löschen fehlgeschlagen', 'error');
-        }
-    } catch (error) {
-        showNotification('Fehler beim Löschen', 'error');
-    }
-}
-
-/**
- * Sendet eine Chat-Nachricht an die API
- */
-async function sendMessage() {
-    const message = messageInput.value.trim();
-    if (!message) return;
-
-    // Benutzer-Nachricht zum Chat hinzufügen
-    addMessage(message, 'user');
-    messageInput.value = '';
-
-    // Lade-Indikator anzeigen
-    loading.classList.add('show');
-    sendBtn.disabled = true;
-
-    try {
-        const requestBody = { message };
-        if (currentSessionId) {
-            requestBody.session_id = currentSessionId;
-        }
-
-        const response = await fetch(`${API_BASE}/api/chat`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify(requestBody)
-        });
-
-        const data = await response.json();
-
-        if (response.ok && data.success) {
-            addMessage(data.response, 'assistant', data.sources);
-
-            // Session-ID aktualisieren
-            if (data.session_id && data.session_id !== currentSessionId) {
-                currentSessionId = data.session_id;
-                await loadChatHistory(); // Chat-Verlauf aktualisieren
-            }
-        } else {
-            addMessage(data.detail || 'Fehler bei der Chat-Anfrage', 'assistant');
-        }
-    } catch (error) {
-        addMessage('Verbindungsfehler zur API', 'assistant');
-    } finally {
-        loading.classList.remove('show');
-        sendBtn.disabled = false;
-        messageInput.focus();
-    }
-}
-
-/**
- * Fügt eine Nachricht zum Chat hinzu
- * @param {string} content - Nachrichteninhalt
- * @param {string} sender - 'user' oder 'assistant'
- * @param {Array} sources - Optional: Array von Quellenangaben
- */
-function addMessage(content, sender, sources = []) {
-    // Leeren Zustand entfernen falls vorhanden
-    const emptyState = chatMessages.querySelector('.empty-state');
-    if (emptyState) {
-        emptyState.remove();
-    }
-
-    const messageDiv = document.createElement('div');
-    messageDiv.className = `message ${sender}`;
-
-    let sourcesHtml = '';
-    if (sources && sources.length > 0) {
-        sourcesHtml = `<div class="message-sources">📄 Quellen: ${sources.join(', ')}</div>`;
-    }
-
-    messageDiv.innerHTML = `
-        <div class="message-content">${content}</div>
-        ${sourcesHtml}
-    `;
-
-    chatMessages.appendChild(messageDiv);
-    chatMessages.scrollTop = chatMessages.scrollHeight;
-}
-
-/**
- * Löscht alle Chat-Nachrichten
- */
-function clearChat() {
-    chatMessages.innerHTML = `
-        <div class="empty-state">
-            <h3>Willkommen beim lokalen KI-Chatbot</h3>
-            <p>Stelle eine Frage oder lade ein Dokument hoch, um zu beginnen.</p>
-            <p class="features-hint">
-                <span class="feature-icon">💾</span> Deine letzten 5 Chats werden automatisch gespeichert<br>
-                <span class="feature-icon">📄</span> OCR erkennt Text in eingescannten PDFs automatisch
-            </p>
-        </div>
-    `;
-}
-
-/**
- * Wechselt die Sichtbarkeit des Chat-Verlaufs
- */
 function toggleChatHistory() {
-    chatHistoryExpanded = !chatHistoryExpanded;
-
-    if (chatHistoryExpanded) {
-        chatHistoryContainer.style.display = 'block';
-        toggleHistoryBtn.querySelector('.toggle-icon').textContent = '▼';
-    } else {
-        chatHistoryContainer.style.display = 'none';
-        toggleHistoryBtn.querySelector('.toggle-icon').textContent = '▶';
-    }
+    state.chatHistoryExpanded = !state.chatHistoryExpanded;
+    elements.chatHistoryContainer.style.display = state.chatHistoryExpanded ? 'block' : 'none';
+    elements.toggleHistoryBtn.querySelector('.toggle-icon').textContent = state.chatHistoryExpanded ? '▼' : '▶';
 }
 
-// Event-Listener
-testModelBtn.addEventListener('click', testModel);
-uploadBtn.addEventListener('click', uploadDocument);
-sendBtn.addEventListener('click', sendMessage);
-newChatBtn.addEventListener('click', createNewChatSession);
-toggleHistoryBtn.addEventListener('click', toggleChatHistory);
-
-// Modal Event-Listener
-modalCancelBtn.addEventListener('click', () => closeConfirmModal(false));
-modalConfirmBtn.addEventListener('click', () => closeConfirmModal(true));
-
-// Modal außerhalb klicken schließt es
-confirmModal.addEventListener('click', (e) => {
-    if (e.target === confirmModal) {
-        closeConfirmModal(false);
-    }
-});
-
-// Model-Auswahl Änderung
-modelSelect.addEventListener('change', async () => {
-    const selectedModel = modelSelect.value;
-    if (selectedModel && selectedModel !== currentModel) {
-        try {
-            const response = await fetch(`${API_BASE}/api/models/${selectedModel}`, {
-                method: 'POST'
-            });
-
-            if (response.ok) {
-                currentModel = selectedModel;
-                showNotification(`Model zu ${selectedModel} gewechselt`, 'success');
-            } else {
-                const error = await response.json();
-                showNotification(error.detail || 'Model-Wechsel fehlgeschlagen', 'error');
-                // Auswahl zurücksetzen
-                modelSelect.value = currentModel;
+// Event Listeners
+const eventHandlers = {
+    'testModelBtn': ['click', testModel],
+    'uploadBtn': ['click', uploadDocument],
+    'sendBtn': ['click', sendMessage],
+    'newChatBtn': ['click', createNewChatSession],
+    'toggleHistoryBtn': ['click', toggleChatHistory],
+    'modalCancelBtn': ['click', () => closeConfirmModal(false)],
+    'modalConfirmBtn': ['click', () => closeConfirmModal(true)],
+    'messageInput': ['keypress', (e) => e.key === 'Enter' && !elements.sendBtn.disabled && sendMessage()],
+    'modelSelect': ['change', async () => {
+        const selectedModel = elements.modelSelect.value;
+        if (selectedModel && selectedModel !== state.currentModel) {
+            try {
+                const { response } = await api.post(`/api/models/${selectedModel}`);
+                if (response.ok) {
+                    state.currentModel = selectedModel;
+                    ui.notify(`Model zu ${selectedModel} gewechselt`);
+                } else {
+                    ui.notify('Model-Wechsel fehlgeschlagen', 'error');
+                    elements.modelSelect.value = state.currentModel;
+                }
+            } catch (error) {
+                ui.notify('Fehler beim Wechseln des Models', 'error');
+                elements.modelSelect.value = state.currentModel;
             }
-        } catch (error) {
-            showNotification('Fehler beim Wechseln des Models', 'error');
-            modelSelect.value = currentModel;
         }
-    }
+    }],
+    'confirmModal': ['click', (e) => e.target === elements.confirmModal && closeConfirmModal(false)]
+};
+
+// Initialize everything
+Object.entries(eventHandlers).forEach(([elementId, [event, handler]]) => {
+    elements[elementId]?.addEventListener(event, handler);
 });
 
-// Enter-Taste zum Senden von Nachrichten
-messageInput.addEventListener('keypress', (e) => {
-    if (e.key === 'Enter' && !sendBtn.disabled) {
-        sendMessage();
-    }
-});
-
-// Datei-Upload Änderung
-fileUpload.addEventListener('change', () => {
-    if (fileUpload.files[0]) {
-        uploadBtn.textContent = 'Hochladen';
-    }
-});
-
-// Anwendung initialisieren wenn Seite geladen ist
 document.addEventListener('DOMContentLoaded', initialize);
