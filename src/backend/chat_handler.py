@@ -102,7 +102,7 @@ class ChatHandlerADK:
                         "num_predict": max_tokens
                     }
                 },
-                timeout=60
+                timeout=200
             )
 
             if response.status_code == 200:
@@ -173,10 +173,7 @@ Antworte auf Deutsch und strukturiere deine Antworten klar."""
         if not self.model_name:
             return {
                 "antwort": "**Fehler:** Kein Ollama-Modell verfügbar. Bitte lade zuerst ein Modell herunter:\n\n```bash\nollama pull llama3\n# oder\nollama pull mistral\n```",
-                "quellen": [],
-                "verwendete_tools": [],
                 "success": False,
-                "modus": "error"
             }
 
         chat_kontext = self._chat_history_formatieren(session_history) if session_history else ""
@@ -190,59 +187,12 @@ Gib keine erfundenen Informationen wieder.
 Gib keinen leeren Text zurück.
 Antwort:"""
         antwort = self._generate_content(prompt, temperature=temperature)
-        tools_used = ["chat_memory"] if chat_kontext else []
 
         return {
             "antwort": antwort,
-            "quellen": [],
-            "verwendete_tools": tools_used,
             "success": True,
-            "modus": "normal"
         }
 
-    def _dokument_suchen(self, query: str, dokument_name: Optional[str] = None, chat_kontext: str = "", temperature: float = 0.7) -> Dict[str, Any]:
-        """Führt Dokumentensuche durch"""
-        # Dokumentensuche
-        if dokument_name:
-            ergebnisse = self.vektor_store.nach_dokument_suchen(dokument_name, query, 5)
-        else:
-            ergebnisse = self.vektor_store.aehnliche_suchen(query, 5)
-
-        tools_used = ["dokumente_suchen"]
-        if chat_kontext:
-            tools_used.append("chat_memory")
-
-        if ergebnisse:
-            dokument_kontext = "\n".join([f"Dokument: {erg['dokument']}\nText: {erg['text']}\n---" for erg in ergebnisse])
-            quellen = list(set([erg["dokument"] for erg in ergebnisse]))
-
-            prompt = f"""{self._get_system_prompt()}
-
-{chat_kontext}
-DOKUMENT-KONTEXT:
-{dokument_kontext}
-
-Beantworte die Frage basierend auf den gefundenen Dokumenten: {query}
-
-Antwort:"""
-
-            antwort = self._generate_content(prompt, temperature=temperature)
-
-            return {
-                "antwort": antwort,
-                "quellen": quellen,
-                "verwendete_tools": tools_used,
-                "success": True,
-                "modus": "dokumentensuche"
-            }
-        else:
-            return {
-                "antwort": "**Keine relevanten Informationen** in den Dokumenten gefunden. Versuche eine andere Formulierung oder lade weitere Dokumente hoch.",
-                "quellen": [],
-                "verwendete_tools": tools_used,
-                "success": True,
-                "modus": "dokumentensuche_leer"
-            }
 
     @property
     def model(self):

@@ -40,22 +40,6 @@ class VektorStore:
             ids=chunk_ids
         )
 
-    def aehnliche_suchen(self, query: str, anzahl_ergebnisse: int = 5) -> List[Dict[str, Any]]:
-        """Semantische Suche über alle Dokumente."""
-        query_embedding = self.embedding_model.encode([query]).tolist()
-        ergebnisse = self.collection.query(query_embeddings=query_embedding, n_results=anzahl_ergebnisse)
-        return self._format_results(ergebnisse)
-
-    def nach_dokument_suchen(self, dokument_name: str, query: str, anzahl_ergebnisse: int = 3) -> List[Dict[str, Any]]:
-        """Sucht in spezifischem Dokument."""
-        query_embedding = self.embedding_model.encode([query]).tolist()
-        ergebnisse = self.collection.query(
-            query_embeddings=query_embedding,
-            n_results=anzahl_ergebnisse,
-            where={"dokument": dokument_name}
-        )
-        return self._format_results(ergebnisse)
-
     def verfuegbare_dokumente_auflisten(self) -> List[str]:
         """Listet alle verfügbaren Dokumente auf."""
         alle_daten = self.collection.get()

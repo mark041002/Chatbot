@@ -14,10 +14,7 @@ class ChatRequest(BaseModel):
 class ChatResponse(BaseModel):
     """Chat-Antwort mit Metadaten"""
     response: str = Field(..., description="Die generierte Antwort")
-    sources: List[str] = Field(default_factory=list, description="Verwendete Dokumentenquellen")
-    tools_used: List[str] = Field(default_factory=list, description="Verwendete Tools")
     success: bool = Field(..., description="Erfolgsstatus der Anfrage")
-    mode: str = Field(..., description="Verwendeter Modus")
     session_id: str = Field(..., description="Session-ID für das Gespräch")
 
 
@@ -67,8 +64,6 @@ class ChatMessage(BaseModel):
     role: str
     content: str
     timestamp: str
-    sources: List[str] = Field(default_factory=list)
-    tools_used: List[str] = Field(default_factory=list)
 
 
 class ChatSessionDetailResponse(BaseModel):

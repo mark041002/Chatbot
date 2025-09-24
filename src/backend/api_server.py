@@ -65,13 +65,6 @@ processor, vektor_store, chat_handler, chat_history = initialize_components()
 @app.post("/api/chat", response_model=ChatResponse)
 async def chat_endpoint(request: ChatRequest):
     try:
-        # Add validation checks
-        if not chat_handler:
-            raise HTTPException(status_code=503, detail="Chat handler not initialized")
-
-        if not chat_history:
-            raise HTTPException(status_code=503, detail="Chat history not initialized")
-
         # Prüfe ob Ollama verfügbar ist und Modelle vorhanden sind
         if not chat_handler.ollama_verfuegbar():
             raise HTTPException(
@@ -83,7 +76,7 @@ async def chat_endpoint(request: ChatRequest):
         if not verfuegbare_modelle:
             raise HTTPException(
                 status_code=503,
-                detail="Keine Modelle verfügbar. Bitte laden Sie ein Modell herunter mit: ollama pull llama3"
+                detail="Keine Modelle verfügbar. Bitte laden Sie ein Modell herunter mit: ollama pull qwen3:4b"
             )
 
         # Stelle sicher, dass ein Modell gesetzt ist
@@ -109,7 +102,6 @@ async def chat_endpoint(request: ChatRequest):
         # Add message to session
         chat_history.add_message(session_id, "user", request.message)
 
-
         result = chat_handler.antwort_generieren(
             request.message,
             session_history,
@@ -121,16 +113,11 @@ async def chat_endpoint(request: ChatRequest):
             session_id,
             "assistant",
             result["antwort"],
-            sources=result.get("quellen", []),
-            tools_used=result.get("verwendete_tools", [])
         )
 
         return ChatResponse(
             response=result["antwort"],
-            sources=result.get("quellen", []),
-            tools_used=result.get("verwendete_tools", []),
-            success=result.get("success", True),
-            mode=result.get("modus", "unknown"),
+            success=result["success"],
             session_id=session_id
         )
 
