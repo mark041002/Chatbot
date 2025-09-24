@@ -1,100 +1,63 @@
 const API_BASE = 'http://127.0.0.1:8000';
 
-// DOM Elements - alle auf einmal holen
+const $ = id => document.getElementById(id);
 const elements = {
-    status: document.getElementById('status'),
-    modelSelect: document.getElementById('modelSelect'),
-    testModelBtn: document.getElementById('testModelBtn'),
-    fileUpload: document.getElementById('fileUpload'),
-    uploadBtn: document.getElementById('uploadBtn'),
-    documentList: document.getElementById('documentList'),
-    chatMessages: document.getElementById('chatMessages'),
-    messageInput: document.getElementById('messageInput'),
-    sendBtn: document.getElementById('sendBtn'),
-    loading: document.getElementById('loading'),
-    notification: document.getElementById('notification'),
-    toggleHistoryBtn: document.getElementById('toggleHistoryBtn'),
-    chatHistoryContainer: document.getElementById('chatHistoryContainer'),
-    newChatBtn: document.getElementById('newChatBtn'),
-    chatSessionsList: document.getElementById('chatSessionsList'),
-    chatTitle: document.getElementById('chatTitle'),
-    chatSessionInfo: document.getElementById('chatSessionInfo'),
-    confirmModal: document.getElementById('confirmModal'),
-    modalTitle: document.getElementById('modalTitle'),
-    modalMessage: document.getElementById('modalMessage'),
-    modalCancelBtn: document.getElementById('modalCancelBtn'),
-    modalConfirmBtn: document.getElementById('modalConfirmBtn')
+    status: $('status'), modelSelect: $('modelSelect'), testModelBtn: $('testModelBtn'),
+    fileUpload: $('fileUpload'), uploadBtn: $('uploadBtn'), documentList: $('documentList'),
+    chatMessages: $('chatMessages'), messageInput: $('messageInput'), sendBtn: $('sendBtn'),
+    loading: $('loading'), notification: $('notification'), toggleHistoryBtn: $('toggleHistoryBtn'),
+    chatHistoryContainer: $('chatHistoryContainer'), newChatBtn: $('newChatBtn'),
+    chatSessionsList: $('chatSessionsList'), chatTitle: $('chatTitle'),
+    chatSessionInfo: $('chatSessionInfo'), temperatureSlider: $('temperatureSlider'),
+    temperatureValue: $('temperatureValue'),
+    toolSearchBtn: $('toolSearchBtn')
 };
 
-// State
 let state = {
     currentModel: '',
     currentSessionId: null,
     chatHistoryExpanded: true,
-    pendingModalAction: null
+    temperature: 0.7,
+    toolSearchActive: false // NEU: Status für Tool-Button
 };
 
-// Utility Functions
 const api = {
-    async get(endpoint) {
-        const response = await fetch(`${API_BASE}${endpoint}`);
-        return response.json();
-    },
+    async get(endpoint) { return (await fetch(`${API_BASE}${endpoint}`)).json(); },
     async post(endpoint, data = {}) {
         const response = await fetch(`${API_BASE}${endpoint}`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(data)
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data)
         });
         return { response, data: await response.json() };
     },
-    async delete(endpoint) {
-        const response = await fetch(`${API_BASE}${endpoint}`, { method: 'DELETE' });
-        return response.json();
-    },
+    async delete(endpoint) { return (await fetch(`${API_BASE}${endpoint}`, { method: 'DELETE' })).json(); },
     async upload(file) {
         const formData = new FormData();
         formData.append('file', file);
-        const response = await fetch(`${API_BASE}/api/upload`, {
-            method: 'POST',
-            body: formData
-        });
+        const response = await fetch(`${API_BASE}/api/upload`, { method: 'POST', body: formData });
         return { response, data: await response.json() };
     }
 };
 
 const ui = {
-    show: (element) => element.style.display = 'block',
-    hide: (element) => element.style.display = 'none',
-    toggle: (element) => element.style.display = element.style.display === 'none' ? 'block' : 'none',
-    setHtml: (element, html) => element.innerHTML = html,
-    addClass: (element, className) => element.classList.add(className),
-    removeClass: (element, className) => element.classList.remove(className),
     notify: (message, type = 'success') => {
         elements.notification.textContent = message;
         elements.notification.className = `notification ${type} show`;
         setTimeout(() => elements.notification.classList.remove('show'), 5000);
-    },
-    setButtonState: (button, disabled, text) => {
-        button.disabled = disabled;
-        if (text) button.textContent = text;
-    },
-    createListItem: (content, className = '') => {
-        const li = document.createElement('li');
-        if (className) li.className = className;
-        li.innerHTML = content;
-        return li;
     }
 };
 
-// Core Functions
+elements.temperatureSlider.addEventListener('input', (e) => {
+    const value = parseInt(e.target.value);
+    state.temperature = value / 100;
+    elements.temperatureValue.textContent = state.temperature.toFixed(1);
+});
+
 async function initialize() {
     try {
         await Promise.all([checkHealth(), loadModels(), loadDocuments(), loadChatHistory()]);
         Object.values(elements).forEach(el => { if (el?.disabled !== undefined) el.disabled = false; });
         ui.notify('Anwendung erfolgreich initialisiert');
     } catch (error) {
-        console.error('Initialisierung fehlgeschlagen:', error);
         ui.notify('Fehler beim Initialisieren der Anwendung', 'error');
     }
 }
@@ -105,13 +68,13 @@ async function checkHealth() {
     const statusText = data.ollama_available ? 'Ollama verbunden' : 'Ollama nicht verfügbar';
 
     elements.status.className = `status ${statusClass}`;
-    ui.setHtml(elements.status, `
+    elements.status.innerHTML = `
         <div class="status-dot"></div>
         <span>${statusText}</span>
         ${data.ollama_available ? `<small style="color: var(--gray-600); margin-left: 10px;">
             ${data.uploaded_files_count} Dateien (${data.uploaded_files_size_mb} MB)
         </small>` : ''}
-    `);
+    `;
 
     if (!data.ollama_available) throw new Error('Ollama nicht verfügbar');
     state.currentModel = data.current_model || '';
@@ -119,51 +82,52 @@ async function checkHealth() {
 
 async function loadModels() {
     const data = await api.get('/api/models');
-    const options = data.models.length > 0
+    elements.modelSelect.innerHTML = data.models.length > 0
         ? data.models.map(model => `<option value="${model}" ${model === data.current_model ? 'selected' : ''}>${model}</option>`).join('')
         : '<option>Keine Modelle verfügbar</option>';
-    ui.setHtml(elements.modelSelect, options);
 }
 
 async function loadDocuments() {
     const data = await api.get('/api/documents');
-    const items = data.documents.length > 0
-        ? data.documents.map(doc => ui.createListItem(`
-            <span class="document-name">📄 ${doc}</span>
-            <button class="btn btn-danger btn-small" onclick="deleteDocument('${doc}')">🗑️</button>
-        `, 'document-item'))
-        : [ui.createListItem('Keine Dokumente vorhanden', '', 'color: var(--gray-600); font-size: 14px; font-style: italic;')];
-
-    elements.documentList.innerHTML = '';
-    items.forEach(item => elements.documentList.appendChild(item));
+    elements.documentList.innerHTML = data.documents.length > 0
+        ? data.documents.map(doc => `
+            <li class="document-item">
+                <div class="document-icon">📄</div>
+                <div class="document-info">
+                    <div class="document-name">${doc}</div>
+                    <div class="document-meta">Dokument</div>
+                </div>
+                <div class="document-actions">
+                    <button class="btn btn-danger btn-tiny" onclick="deleteDocument('${doc}')" title="Löschen">🗑️</button>
+                </div>
+            </li>
+        `).join('')
+        : '<li style="color: var(--gray-600); font-style: italic; padding: 20px; text-align: center;">Keine Dokumente vorhanden</li>';
 }
 
 async function loadChatHistory() {
     try {
         const sessions = await api.get('/api/chat/sessions');
-        const items = sessions.length > 0
+        elements.chatSessionsList.innerHTML = sessions.length > 0
             ? sessions.map(session => `
                 <div class="chat-session-item">
                     <div class="session-content" onclick="loadChatSession('${session.session_id}')">
                         <div class="session-title">${session.title}</div>
                         <div class="session-meta">${session.message_count} Nachrichten • ${formatDate(session.updated_at)}</div>
                     </div>
-                    <button class="btn btn-danger btn-tiny" onclick="deleteChatSession('${session.session_id}')" title="Löschen">🗑️</button>
+                    <button class="btn btn-danger btn-tiny" onclick="deleteChatSession('${session.session_id}')">🗑️</button>
                 </div>
             `).join('')
             : '<div class="no-sessions">Keine gespeicherten Chats</div>';
-
-        ui.setHtml(elements.chatSessionsList, items);
     } catch (error) {
-        ui.setHtml(elements.chatSessionsList, '<div class="no-sessions">Fehler beim Laden</div>');
+        elements.chatSessionsList.innerHTML = '<div class="no-sessions">Fehler beim Laden</div>';
     }
 }
 
-// Chat Functions
 async function loadChatSession(sessionId) {
     try {
         const session = await api.get(`/api/chat/sessions/${sessionId}`);
-        ui.setHtml(elements.chatMessages, '');
+        elements.chatMessages.innerHTML = '';
         session.messages.forEach(msg => addMessage(msg.content, msg.role, msg.sources || []));
         state.currentSessionId = sessionId;
         updateChatHeader(session.title);
@@ -173,30 +137,15 @@ async function loadChatSession(sessionId) {
     }
 }
 
-async function createNewChatSession() {
-    try {
-        const { response, data } = await api.post('/api/chat/sessions');
-        if (response.ok) {
-            state.currentSessionId = data.session_id;
-            await loadChatHistory();
-            ui.notify('Neue Chat-Session erstellt');
-        }
-        clearChat();
-        updateChatHeader();
-    } catch (error) {
-        state.currentSessionId = null;
-        clearChat();
-        updateChatHeader();
-    }
+function createNewChat() {
+    state.currentSessionId = null;
+    clearChat();
+    updateChatHeader();
+    ui.notify('Neuer Chat bereit');
 }
 
 async function deleteChatSession(sessionId) {
     const isCurrentSession = sessionId === state.currentSessionId;
-    const confirmed = await showConfirmModal('Chat löschen',
-        isCurrentSession ? 'Diese Chat-Session ist aktuell aktiv. Wirklich löschen?' : 'Chat-Session wirklich löschen?');
-
-    if (!confirmed) return;
-
     try {
         await api.delete(`/api/chat/sessions/${sessionId}`);
         if (isCurrentSession) {
@@ -212,7 +161,7 @@ async function deleteChatSession(sessionId) {
 }
 
 function updateChatHeader(title = null) {
-    elements.chatTitle.textContent = title ? `💬 ${title}` : '💬 Chat';
+    elements.chatTitle.textContent = title ? `💬 ${title}` : '💬 Neuer Chat';
     elements.chatSessionInfo.style.display = title ? 'block' : 'none';
     if (title) elements.chatSessionInfo.textContent = 'Gespeicherte Session';
 }
@@ -223,20 +172,31 @@ async function sendMessage() {
 
     addMessage(message, 'user');
     elements.messageInput.value = '';
-    ui.addClass(elements.loading, 'show');
-    ui.setButtonState(elements.sendBtn, true);
+    elements.loading.classList.add('show');
+    elements.sendBtn.disabled = true;
 
     try {
-        const requestBody = { message };
-        if (state.currentSessionId) requestBody.session_id = state.currentSessionId;
+        const requestBody = {
+            message,
+            temperature: state.temperature,
+        };
+        if (state.currentSessionId) {
+            requestBody.session_id = state.currentSessionId;
+        }
 
         const { response, data } = await api.post('/api/chat', requestBody);
 
         if (response.ok && data.success) {
             addMessage(data.response, 'assistant', data.sources);
-            if (data.session_id && data.session_id !== state.currentSessionId) {
+
+            if (data.session_id) {
+                const isNewSession = !state.currentSessionId;
                 state.currentSessionId = data.session_id;
-                await loadChatHistory();
+
+                if (isNewSession) {
+                    await loadChatHistory();
+                    ui.notify('Session automatisch erstellt und gespeichert');
+                }
             }
         } else {
             addMessage(data.detail || 'Fehler bei der Chat-Anfrage', 'assistant');
@@ -244,8 +204,8 @@ async function sendMessage() {
     } catch (error) {
         addMessage('Verbindungsfehler zur API', 'assistant');
     } finally {
-        ui.removeClass(elements.loading, 'show');
-        ui.setButtonState(elements.sendBtn, false);
+        elements.loading.classList.remove('show');
+        elements.sendBtn.disabled = false;
         elements.messageInput.focus();
     }
 }
@@ -257,27 +217,31 @@ function addMessage(content, sender, sources = []) {
     const sourcesHtml = sources.length > 0 ? `<div class="message-sources">📄 Quellen: ${sources.join(', ')}</div>` : '';
     const messageDiv = document.createElement('div');
     messageDiv.className = `message ${sender}`;
-    messageDiv.innerHTML = `<div class="message-content">${content}</div>${sourcesHtml}`;
+
+    const processedContent = sender === 'assistant' && window.marked ? marked.parse(content) : content;
+
+    messageDiv.innerHTML = `<div class="message-content">${processedContent}</div>${sourcesHtml}`;
 
     elements.chatMessages.appendChild(messageDiv);
     elements.chatMessages.scrollTop = elements.chatMessages.scrollHeight;
 }
 
 function clearChat() {
-    ui.setHtml(elements.chatMessages, `
+    elements.chatMessages.innerHTML = `
         <div class="empty-state">
             <h3>Willkommen beim lokalen KI-Chatbot</h3>
             <p>Stelle eine Frage oder lade ein Dokument hoch, um zu beginnen.</p>
+            <p>Benutze den Knopf Links von der Eingabezeile um die Dokumentensuche zu aktivieren/deaktivieren</p>
         </div>
-    `);
+    `;
 }
 
-// Document Functions
 async function uploadDocument() {
     const file = elements.fileUpload.files[0];
     if (!file) return ui.notify('Bitte wähle eine Datei aus', 'error');
 
-    ui.setButtonState(elements.uploadBtn, true, 'Lade hoch...');
+    elements.uploadBtn.disabled = true;
+    elements.uploadBtn.textContent = 'Lade hoch...';
 
     try {
         const { response, data } = await api.upload(file);
@@ -293,30 +257,27 @@ async function uploadDocument() {
     } catch (error) {
         ui.notify('Fehler beim Hochladen', 'error');
     } finally {
-        ui.setButtonState(elements.uploadBtn, false, 'Hochladen');
+        elements.uploadBtn.disabled = false;
+        elements.uploadBtn.textContent = 'Hochladen';
     }
 }
 
 async function deleteDocument(docName) {
-    const confirmed = await showConfirmModal('Dokument löschen',
-        `Dokument "${docName}" komplett löschen? (Aus Datenbank UND Upload-Ordner)`);
-    if (!confirmed) return;
-
     try {
         await api.delete(`/api/documents/${docName}`);
-        ui.notify('Dokument komplett gelöscht');
+        ui.notify('Dokument gelöscht');
         await Promise.all([loadDocuments(), checkHealth()]);
     } catch (error) {
         ui.notify('Fehler beim Löschen', 'error');
     }
 }
 
-// Model Functions
 async function testModel() {
     const model = elements.modelSelect.value;
     if (!model) return;
 
-    ui.setButtonState(elements.testModelBtn, true, 'Teste...');
+    elements.testModelBtn.disabled = true;
+    elements.testModelBtn.textContent = 'Teste...';
 
     try {
         const { response } = await api.post(`/api/models/${model}`);
@@ -329,11 +290,11 @@ async function testModel() {
     } catch (error) {
         ui.notify('Fehler beim Testen des Models', 'error');
     } finally {
-        ui.setButtonState(elements.testModelBtn, false, 'Model testen');
+        elements.testModelBtn.disabled = false;
+        elements.testModelBtn.textContent = 'Model testen';
     }
 }
 
-// Utility Functions
 function formatDate(dateString) {
     const date = new Date(dateString);
     const diffMs = new Date() - date;
@@ -348,23 +309,6 @@ function formatDate(dateString) {
     return date.toLocaleDateString('de-DE');
 }
 
-function showConfirmModal(title, message) {
-    return new Promise((resolve) => {
-        elements.modalTitle.textContent = title;
-        elements.modalMessage.textContent = message;
-        ui.show(elements.confirmModal);
-        state.pendingModalAction = resolve;
-    });
-}
-
-function closeConfirmModal(confirmed = false) {
-    ui.hide(elements.confirmModal);
-    if (state.pendingModalAction) {
-        state.pendingModalAction(confirmed);
-        state.pendingModalAction = null;
-    }
-}
-
 function toggleChatHistory() {
     state.chatHistoryExpanded = !state.chatHistoryExpanded;
     elements.chatHistoryContainer.style.display = state.chatHistoryExpanded ? 'block' : 'none';
@@ -372,39 +316,30 @@ function toggleChatHistory() {
 }
 
 // Event Listeners
-const eventHandlers = {
-    'testModelBtn': ['click', testModel],
-    'uploadBtn': ['click', uploadDocument],
-    'sendBtn': ['click', sendMessage],
-    'newChatBtn': ['click', createNewChatSession],
-    'toggleHistoryBtn': ['click', toggleChatHistory],
-    'modalCancelBtn': ['click', () => closeConfirmModal(false)],
-    'modalConfirmBtn': ['click', () => closeConfirmModal(true)],
-    'messageInput': ['keypress', (e) => e.key === 'Enter' && !elements.sendBtn.disabled && sendMessage()],
-    'modelSelect': ['change', async () => {
-        const selectedModel = elements.modelSelect.value;
-        if (selectedModel && selectedModel !== state.currentModel) {
-            try {
-                const { response } = await api.post(`/api/models/${selectedModel}`);
-                if (response.ok) {
-                    state.currentModel = selectedModel;
-                    ui.notify(`Model zu ${selectedModel} gewechselt`);
-                } else {
-                    ui.notify('Model-Wechsel fehlgeschlagen', 'error');
-                    elements.modelSelect.value = state.currentModel;
-                }
-            } catch (error) {
-                ui.notify('Fehler beim Wechseln des Models', 'error');
+elements.testModelBtn.addEventListener('click', testModel);
+elements.uploadBtn.addEventListener('click', uploadDocument);
+elements.sendBtn.addEventListener('click', sendMessage);
+elements.newChatBtn.addEventListener('click', createNewChat);
+elements.toggleHistoryBtn.addEventListener('click', toggleChatHistory);
+elements.messageInput.addEventListener('keypress', (e) => e.key === 'Enter' && !elements.sendBtn.disabled && sendMessage());
+
+elements.modelSelect.addEventListener('change', async () => {
+    const selectedModel = elements.modelSelect.value;
+    if (selectedModel && selectedModel !== state.currentModel) {
+        try {
+            const { response } = await api.post(`/api/models/${selectedModel}`);
+            if (response.ok) {
+                state.currentModel = selectedModel;
+                ui.notify(`Model zu ${selectedModel} gewechselt`);
+            } else {
+                ui.notify('Model-Wechsel fehlgeschlagen', 'error');
                 elements.modelSelect.value = state.currentModel;
             }
+        } catch (error) {
+            ui.notify('Fehler beim Wechseln des Models', 'error');
+            elements.modelSelect.value = state.currentModel;
         }
-    }],
-    'confirmModal': ['click', (e) => e.target === elements.confirmModal && closeConfirmModal(false)]
-};
-
-// Initialize everything
-Object.entries(eventHandlers).forEach(([elementId, [event, handler]]) => {
-    elements[elementId]?.addEventListener(event, handler);
+    }
 });
 
 document.addEventListener('DOMContentLoaded', initialize);

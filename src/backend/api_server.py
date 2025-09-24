@@ -1,6 +1,5 @@
 from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
 import os
 import tempfile
 from typing import List, Optional
@@ -19,7 +18,6 @@ from models import (
 app = FastAPI(
     title="Lokaler KI-Chatbot API",
     description="API für den lokalen KI-Chatbot mit Dokumentensuche, Chat-Verlauf und OCR-Unterstützung",
-    version="2.0.0"
 )
 
 app.add_middleware(
@@ -34,7 +32,6 @@ app.add_middleware(
 def initialize_components():
     """
     Initialisiert alle Systemkomponenten und erstellt notwendige Verzeichnisse.
-
     Returns:
         tuple: (processor, vektor_store, chat_handler, chat_history) - Alle initialisierten Komponenten
     """
@@ -46,6 +43,19 @@ def initialize_components():
     chat_handler = ChatHandlerADK(vektor_store)
     chat_history = ChatHistoryManager()
 
+    # Automatische Modellinitialisierung
+    if chat_handler.ollama_verfuegbar():
+        verfuegbare_modelle = chat_handler.verfuegbare_modelle_auflisten()
+        if verfuegbare_modelle:
+            # Nimm das erste verfügbare Modell
+            erstes_model = verfuegbare_modelle[0]
+            chat_handler.model_wechseln(erstes_model)
+        else:
+            print("WARNUNG: Ollama ist verfügbar, aber keine Modelle gefunden!")
+            print("Bitte laden Sie ein Modell herunter mit: ollama pull llama3")
+    else:
+        print("WARNUNG: Ollama ist nicht verfügbar!")
+
     return processor, vektor_store, chat_handler, chat_history
 
 
@@ -54,57 +64,87 @@ processor, vektor_store, chat_handler, chat_history = initialize_components()
 
 @app.post("/api/chat", response_model=ChatResponse)
 async def chat_endpoint(request: ChatRequest):
-    """
-    Hauptendpoint für Chat-Nachrichten mit automatischem Session-Management.
+    try:
+        # Add validation checks
+        if not chat_handler:
+            raise HTTPException(status_code=503, detail="Chat handler not initialized")
 
-    Args:
-        request (ChatRequest): Chat-Anfrage mit Nachricht und optionaler Session-ID
+        if not chat_history:
+            raise HTTPException(status_code=503, detail="Chat history not initialized")
 
-    Returns:
-        ChatResponse: Antwort mit generiertem Text, Quellen und verwendeten Tools
-    """
-    if not chat_handler or not chat_handler.ollama_verfuegbar():
-        raise HTTPException(status_code=503, detail="Ollama ist nicht verfügbar")
+        # Prüfe ob Ollama verfügbar ist und Modelle vorhanden sind
+        if not chat_handler.ollama_verfuegbar():
+            raise HTTPException(
+                status_code=503,
+                detail="Ollama ist nicht verfügbar. Bitte starten Sie Ollama zuerst."
+            )
 
-    session_id = request.session_id
-    if not session_id:
-        session_id = chat_history.create_session()
+        verfuegbare_modelle = chat_handler.verfuegbare_modelle_auflisten()
+        if not verfuegbare_modelle:
+            raise HTTPException(
+                status_code=503,
+                detail="Keine Modelle verfügbar. Bitte laden Sie ein Modell herunter mit: ollama pull llama3"
+            )
 
-    # Session-Verlauf laden für Kontext
-    session_data = None
-    session_history = []
-    if chat_history:
-        session_data = chat_history.get_session(session_id)
-        if session_data:
-            session_history = session_data.get("messages", [])
+        # Stelle sicher, dass ein Modell gesetzt ist
+        if not chat_handler.model_name or chat_handler.model_name not in verfuegbare_modelle:
+            erstes_model = verfuegbare_modelle[0]
+            chat_handler.model_wechseln(erstes_model)
+            print(f"Automatisch zu Modell '{erstes_model}' gewechselt")
 
-    chat_history.add_message(session_id, "user", request.message)
+        session_id = request.session_id
 
-    result = chat_handler.antwort_generieren(request.message, session_history)
+        # Session only creation when no session exists and message is sent
+        if not session_id:
+            session_id = chat_history.create_session()
 
-    chat_history.add_message(
-        session_id,
-        "assistant",
-        result["antwort"],
-        sources=result["quellen"],
-        tools_used=result["verwendete_tools"]
-    )
+        # Load session history for context
+        session_data = None
+        session_history = []
+        if chat_history:
+            session_data = chat_history.get_session(session_id)
+            if session_data:
+                session_history = session_data.get("messages", [])
 
-    return ChatResponse(
-        response=result["antwort"],
-        sources=result["quellen"],
-        tools_used=result["verwendete_tools"],
-        success=result["success"],
-        mode=result.get("modus", "unknown"),
-        session_id=session_id
-    )
+        # Add message to session
+        chat_history.add_message(session_id, "user", request.message)
 
+
+        result = chat_handler.antwort_generieren(
+            request.message,
+            session_history,
+            temperature=request.temperature,
+        )
+
+        # Add assistant response to session
+        chat_history.add_message(
+            session_id,
+            "assistant",
+            result["antwort"],
+            sources=result.get("quellen", []),
+            tools_used=result.get("verwendete_tools", [])
+        )
+
+        return ChatResponse(
+            response=result["antwort"],
+            sources=result.get("quellen", []),
+            tools_used=result.get("verwendete_tools", []),
+            success=result.get("success", True),
+            mode=result.get("modus", "unknown"),
+            session_id=session_id
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        # Add proper error logging
+        print(f"Error in chat endpoint: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 @app.get("/api/chat/sessions", response_model=List[ChatSessionResponse])
 async def get_chat_sessions():
     """
     Gibt die letzten Chat-Sessions zurück.
-
     Returns:
         List[ChatSessionResponse]: Liste der letzten 5 Chat-Sessions
     """
@@ -118,15 +158,11 @@ async def get_chat_sessions():
 async def get_chat_session(session_id: str):
     """
     Lädt eine spezifische Chat-Session mit allen Nachrichten.
-
     Args:
         session_id (str): Eindeutige Session-ID
-
     Returns:
         ChatSessionDetailResponse: Vollständige Session-Daten mit Nachrichtenverlauf
     """
-    if not chat_history:
-        raise HTTPException(status_code=503, detail="Chat History nicht verfügbar")
 
     session = chat_history.get_session(session_id)
     if not session:
@@ -145,16 +181,11 @@ async def get_chat_session(session_id: str):
 async def delete_chat_session(session_id: str):
     """
     Löscht eine Chat-Session permanent.
-
     Args:
         session_id (str): ID der zu löschenden Session
-
     Returns:
         dict: Bestätigungsnachricht
     """
-    if not chat_history:
-        raise HTTPException(status_code=503, detail="Chat History nicht verfügbar")
-
     success = chat_history.delete_session(session_id)
     if not success:
         raise HTTPException(status_code=404, detail="Session nicht gefunden")
@@ -162,29 +193,10 @@ async def delete_chat_session(session_id: str):
     return {"message": f"Session '{session_id}' erfolgreich gelöscht"}
 
 
-@app.post("/api/chat/sessions")
-async def create_chat_session(title: Optional[str] = None):
-    """
-    Erstellt eine neue Chat-Session.
-
-    Args:
-        title (Optional[str]): Optionaler Titel für die Session
-
-    Returns:
-        dict: Session-ID und Bestätigungsnachricht
-    """
-    if not chat_history:
-        raise HTTPException(status_code=503, detail="Chat History nicht verfügbar")
-
-    session_id = chat_history.create_session(title)
-    return {"session_id": session_id, "message": "Session erfolgreich erstellt"}
-
-
 @app.get("/api/documents", response_model=DocumentListResponse)
 async def get_documents():
     """
     Listet alle verfügbaren Dokumente in der Vektordatenbank auf.
-
     Returns:
         DocumentListResponse: Liste aller Dokumente mit Anzahl
     """
@@ -199,16 +211,11 @@ async def get_documents():
 async def delete_document(document_name: str):
     """
     Löscht ein Dokument aus der Vektordatenbank und dem Upload-Ordner.
-
     Args:
         document_name (str): Name des zu löschenden Dokuments
-
     Returns:
         dict: Bestätigungsnachricht
     """
-    if not vektor_store:
-        raise HTTPException(status_code=503, detail="Vektor Store nicht verfügbar")
-
     documents = vektor_store.verfuegbare_dokumente_auflisten()
     if document_name not in documents:
         raise HTTPException(status_code=404, detail="Dokument nicht gefunden")
@@ -226,88 +233,12 @@ async def delete_document(document_name: str):
     return {"message": f"Dokument '{document_name}' erfolgreich gelöscht"}
 
 
-@app.get("/api/uploads")
-async def get_uploaded_files():
-    """
-    Listet alle hochgeladenen Dateien mit detaillierten Metadaten auf.
-
-    Returns:
-        dict: Liste aller Dateien mit Größe, Änderungsdatum und Anzahl
-    """
-    upload_dir = "data/uploads"
-    if not os.path.exists(upload_dir):
-        return {"files": [], "count": 0}
-
-    files = []
-    for filename in os.listdir(upload_dir):
-        file_path = os.path.join(upload_dir, filename)
-        if os.path.isfile(file_path):
-            file_size = os.path.getsize(file_path)
-            file_modified = os.path.getmtime(file_path)
-
-            files.append({
-                "filename": filename,
-                "size_bytes": file_size,
-                "size_mb": round(file_size / (1024 * 1024), 2),
-                "modified_timestamp": file_modified,
-                "extension": os.path.splitext(filename)[1].lower()
-            })
-
-    files.sort(key=lambda x: x["modified_timestamp"], reverse=True)
-    return {"files": files, "count": len(files)}
-
-
-@app.get("/api/uploads/{filename}")
-async def download_uploaded_file(filename: str):
-    """
-    Lädt eine hochgeladene Datei herunter.
-
-    Args:
-        filename (str): Name der herunterzuladenden Datei
-
-    Returns:
-        FileResponse: Datei als Download
-    """
-    file_path = os.path.join("data/uploads", filename)
-
-    if not os.path.exists(file_path):
-        raise HTTPException(status_code=404, detail="Datei nicht gefunden")
-
-    return FileResponse(
-        path=file_path,
-        filename=filename,
-        media_type='application/octet-stream'
-    )
-
-
-@app.delete("/api/uploads/{filename}")
-async def delete_uploaded_file(filename: str):
-    """
-    Löscht eine Datei aus dem Upload-Ordner.
-
-    Args:
-        filename (str): Name der zu löschenden Datei
-
-    Returns:
-        dict: Bestätigungsnachricht
-    """
-    file_path = os.path.join("data/uploads", filename)
-
-    if not os.path.exists(file_path):
-        raise HTTPException(status_code=404, detail="Datei nicht gefunden")
-
-    os.remove(file_path)
-    return {"message": f"Datei '{filename}' erfolgreich entfernt"}
-
-
 @app.post("/api/upload")
 async def upload_document(file: UploadFile = File(...)):
     """
     Lädt ein Dokument hoch, verarbeitet es und fügt es zur Vektordatenbank hinzu.
-
     Args:
         file (UploadFile): Hochgeladene Datei (PDF, DOCX oder TXT)
-
     Returns:
         dict: Detaillierte Informationen über die verarbeitete Datei
     """
@@ -376,7 +307,6 @@ async def upload_document(file: UploadFile = File(...)):
 async def get_models():
     """
     Gibt alle verfügbaren Ollama-Modelle zurück.
-
     Returns:
         ModelResponse: Liste aller Modelle mit aktuellem Modell und Verfügbarkeitsstatus
     """
@@ -385,7 +315,14 @@ async def get_models():
 
     ollama_available = chat_handler.ollama_verfuegbar()
     models = chat_handler.verfuegbare_modelle_auflisten() if ollama_available else []
-    current_model = chat_handler.model if ollama_available else ""
+    current_model = chat_handler.model_name if ollama_available else ""
+
+    # Automatisch erstes Modell setzen falls keins gesetzt ist
+    if ollama_available and models and (not current_model or current_model not in models):
+        erstes_model = models[0]
+        chat_handler.model_wechseln(erstes_model)
+        current_model = erstes_model
+        print(f"Automatisch Modell '{erstes_model}' gesetzt")
 
     return ModelResponse(
         models=models,
@@ -398,20 +335,21 @@ async def get_models():
 async def switch_model(model_name: str):
     """
     Wechselt das verwendete LLM-Modell nach Validierung.
-
     Args:
         model_name (str): Name des neuen Modells
-
     Returns:
         dict: Bestätigung des Modellwechsels
     """
-    if not chat_handler:
-        raise HTTPException(status_code=503, detail="Chat Handler nicht verfügbar")
-
     if not chat_handler.ollama_verfuegbar():
         raise HTTPException(status_code=503, detail="Ollama ist nicht verfügbar")
 
     available_models = chat_handler.verfuegbare_modelle_auflisten()
+    if not available_models:
+        raise HTTPException(
+            status_code=503,
+            detail="Keine Modelle verfügbar. Bitte laden Sie ein Modell herunter mit: ollama pull llama3"
+        )
+
     if model_name not in available_models:
         raise HTTPException(status_code=404, detail="Modell nicht gefunden")
 
@@ -430,7 +368,6 @@ async def switch_model(model_name: str):
 async def health_check():
     """
     Umfassender Gesundheitscheck der API und aller Systemkomponenten.
-
     Returns:
         dict: Detaillierte Statusinformationen über alle Komponenten und Statistiken
     """
@@ -443,9 +380,20 @@ async def health_check():
 
     ollama_status = False
     current_model = None
+    available_models = []
+
     if chat_handler:
         ollama_status = chat_handler.ollama_verfuegbar()
-        current_model = chat_handler.model if ollama_status else None
+        if ollama_status:
+            available_models = chat_handler.verfuegbare_modelle_auflisten()
+            current_model = chat_handler.model_name if available_models else None
+
+            # Automatisch erstes Modell setzen falls keins gesetzt ist
+            if available_models and (not current_model or current_model not in available_models):
+                erstes_model = available_models[0]
+                chat_handler.model_wechseln(erstes_model)
+                current_model = erstes_model
+                print(f"Health Check: Automatisch Modell '{erstes_model}' gesetzt")
 
     document_count = 0
     if vektor_store:
@@ -462,10 +410,18 @@ async def health_check():
                 upload_count += 1
                 upload_size += os.path.getsize(file_path)
 
+    health_issues = []
+    if not ollama_status:
+        health_issues.append("Ollama ist nicht verfügbar")
+    elif not available_models:
+        health_issues.append("Keine Modelle verfügbar - bitte laden Sie ein Modell herunter")
+
     return {
-        "api_status": "healthy",
+        "api_status": "healthy" if not health_issues else "warning",
+        "health_issues": health_issues,
         "components": components_status,
         "ollama_available": ollama_status,
+        "available_models": available_models,
         "document_count": document_count,
         "uploaded_files_count": upload_count,
         "uploaded_files_size_mb": round(upload_size / (1024 * 1024), 2),
@@ -479,10 +435,4 @@ async def health_check():
 
 
 if __name__ == "__main__":
-    uvicorn.run(
-        "api_server:app",
-        host="0.0.0.0",
-        port=8000,
-        reload=True,
-        log_level="info"
-    )
+    uvicorn.run("api_server:app", host="0.0.0.0", port=8000, reload=True, log_level="info")

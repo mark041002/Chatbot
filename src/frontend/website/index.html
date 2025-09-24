@@ -4,13 +4,13 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Lokaler KI-Chatbot</title>
-    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🤖</text></svg>">
     <link rel="stylesheet" href="styles.css">
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 </head>
 <body>
     <div class="container">
         <div class="sidebar">
-            <h2>🤖 KI-Chatbot</h2>
+            <h2>KI-Chatbot</h2>
             <div id="status" class="status offline">
                 <div class="status-dot"></div>
                 <span>Verbindung wird geprüft...</span>
@@ -27,28 +27,30 @@
             </div>
 
             <div class="section">
+                <h3>Kreativität der KI</h3>
+                <div class="temperature-control">
+                    <input type="range" id="temperatureSlider" min="0" max="100" value="70" class="slider" disabled>
+                    <div class="temperature-display">
+                        <span>Kreativität: </span>
+                        <span id="temperatureValue">0.7</span>
+                    </div>
+                    <div class="temperature-labels">
+                        <span class="temp-label-left">Präzise</span>
+                        <span class="temp-label-right">Kreativ</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="section">
                 <h3>Model</h3>
                 <select id="modelSelect" disabled><option>Lade Modelle...</option></select>
                 <button id="testModelBtn" class="btn btn-secondary btn-small full-width" disabled>Model testen</button>
-            </div>
-
-            <div class="section">
-                <h3>Dokument hochladen</h3>
-                <input type="file" id="fileUpload" accept=".pdf,.txt,.docx" disabled>
-                <button id="uploadBtn" class="btn btn-primary btn-small full-width" disabled>Hochladen</button>
-            </div>
-
-            <div class="section">
-                <h3>Verarbeitete Dokumente</h3>
-                <ul id="documentList" class="document-list">
-                    <li class="loading">Lade Dokumente...</li>
-                </ul>
             </div>
         </div>
 
         <div class="chat-area">
             <div class="chat-header">
-                <h1 id="chatTitle">💬 Chat</h1>
+                <h1 id="chatTitle">Chatverlauf</h1>
                 <span id="chatSessionInfo" class="chat-session-info">Gespeicherte Session</span>
             </div>
 
@@ -56,6 +58,7 @@
                 <div class="empty-state">
                     <h3>Willkommen beim lokalen KI-Chatbot</h3>
                     <p>Stelle eine Frage oder lade ein Dokument hoch, um zu beginnen.</p>
+                    <p>Benutze den Knopf Links von der Eingabezeile um die Dokumentensuche zu aktivieren/deaktivieren</p>
                 </div>
             </div>
 
@@ -66,21 +69,22 @@
                 <button id="sendBtn" disabled>Senden</button>
             </div>
         </div>
-    </div>
 
-    <div id="notification" class="notification"></div>
+        <div class="documents-panel">
+            <h2>📄 Dokumente</h2>
 
-    <div id="confirmModal" class="modal">
-        <div class="modal-content">
-            <h3 id="modalTitle">Bestätigung</h3>
-            <p id="modalMessage">Möchten Sie fortfahren?</p>
-            <div class="modal-actions">
-                <button id="modalCancelBtn" class="btn btn-secondary">Abbrechen</button>
-                <button id="modalConfirmBtn" class="btn btn-danger">Bestätigen</button>
+            <div class="document-upload">
+                <input type="file" id="fileUpload" accept=".pdf,.txt,.docx" disabled>
+                <button id="uploadBtn" class="btn btn-primary btn-small full-width" disabled>Hochladen</button>
             </div>
+
+            <ul id="documentList" class="document-list">
+                <li class="loading">Lade Dokumente...</li>
+            </ul>
         </div>
     </div>
 
+    <div id="notification" class="notification"></div>
     <script src="script.js"></script>
 </body>
 </html>

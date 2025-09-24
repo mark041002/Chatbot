@@ -1,55 +1,120 @@
 """
-Chat Handler - Intelligente Chat-Logik mit Dokumentensuche und Kontextverarbeitung
+Chat Handler - Vereinfacht mit integriertem Ollama Client und intelligenter Dokumentensuche
 """
 
-import re
+import requests
+import json
 from typing import Tuple, List, Dict, Any, Optional
-from google.adk.agents import LlmAgent
-
-from ollama_client import OllamaLLM
-
-try:
-    from google.adk.planners import BuiltInPlanner
-    PLANNER_AVAILABLE = True
-except ImportError:
-    PLANNER_AVAILABLE = False
 
 
 class ChatHandlerADK:
-    """Chat Handler für intelligente Konversationsverarbeitung mit Dokumentenintegration"""
+    """Vereinfachter Chat Handler mit integriertem Ollama Client"""
 
-    def __init__(self, vektor_store, ollama_url: str = "http://localhost:11434", model: str = "llama3"):
+    def __init__(self, vektor_store, ollama_url: str = "http://localhost:11434"):
         """
-        Initialisiert den Chat Handler mit allen notwendigen Komponenten.
+        Initialisiert den Chat Handler.
 
         Args:
             vektor_store: Vektordatenbank für Dokumentensuche
             ollama_url (str): URL des Ollama-Servers
-            model (str): Standard-LLM-Modell
         """
         self.vektor_store = vektor_store
-        self.llm = OllamaLLM(ollama_url, model)
+        self.ollama_url = ollama_url
+        self.model_name = None  # Wird automatisch gesetzt
+
+        # Automatische Modell-Auswahl
+        self._initialize_model()
 
         from document_processor import DokumentProcessor
         self.doc_processor = DokumentProcessor(vektor_store=vektor_store)
 
-        self.agent = LlmAgent(
-            name="Assistent",
-            model=self.llm,
-            tools=[self.doc_processor.search_tool, self.doc_processor.list_tool]
-        )
+    def _initialize_model(self):
+        """Initialisiert automatisch das erste verfügbare Modell"""
+        if not self.ollama_verfuegbar():
+            raise ConnectionError("Ollama Server ist nicht erreichbar. Stelle sicher, dass Ollama läuft.")
+
+        verfuegbare_modelle = self.verfuegbare_modelle_auflisten()
+
+        if not verfuegbare_modelle:
+            raise ValueError(
+                "Keine Ollama-Modelle gefunden! "
+                "Bitte lade zuerst ein Modell herunter mit: 'ollama pull llama3' oder 'ollama pull mistral'"
+            )
+
+        # Wähle das erste verfügbare Modell
+        self.model_name = verfuegbare_modelle[0]
+        print(f"Automatisch ausgewähltes Modell: {self.model_name}")
+
+    def ollama_verfuegbar(self) -> bool:
+        """Prüft ob Ollama verfügbar ist"""
+        try:
+            response = requests.get(f"{self.ollama_url}/api/tags", timeout=3)
+            return response.status_code == 200
+        except requests.RequestException:
+            return False
+
+    def verfuegbare_modelle_auflisten(self) -> List[str]:
+        """Gibt alle verfügbaren Modelle zurück"""
+        try:
+            response = requests.get(f"{self.ollama_url}/api/tags", timeout=5)
+            if response.status_code == 200:
+                modelle = response.json().get("models", [])
+                return [model["name"] for model in modelle]
+        except requests.RequestException:
+            pass
+        return []
+
+    def model_testen(self, model_name: str) -> bool:
+        """Testet ob ein Modell funktioniert"""
+        try:
+            response = requests.post(
+                f"{self.ollama_url}/api/generate",
+                json={
+                    "model": model_name,
+                    "prompt": "Test",
+                    "stream": False,
+                    "options": {"num_predict": 1}
+                },
+                timeout=10
+            )
+            return response.status_code == 200 and "response" in response.json()
+        except requests.RequestException:
+            return False
+
+    def model_wechseln(self, neues_model: str):
+        """Wechselt zu einem neuen Modell"""
+        self.model_name = neues_model
+
+    def _generate_content(self, prompt: str, temperature: float = 0.7, max_tokens: int = 2048) -> str:
+        """Generiert Text mit Ollama"""
+        if not self.model_name:
+            return "Fehler: Kein Modell verfügbar"
+
+        try:
+            response = requests.post(
+                f"{self.ollama_url}/api/generate",
+                json={
+                    "model": self.model_name,
+                    "prompt": prompt,
+                    "stream": False,
+                    "options": {
+                        "temperature": temperature,
+                        "num_predict": max_tokens
+                    }
+                },
+                timeout=60
+            )
+
+            if response.status_code == 200:
+                return response.json()["response"]
+            else:
+                return f"Ollama-Fehler {response.status_code}: {response.text}"
+
+        except Exception as e:
+            return f"Ollama nicht erreichbar: {str(e)}"
 
     def _chat_history_formatieren(self, session_history: List[Dict[str, Any]], max_nachrichten: int = 8) -> str:
-        """
-        Formatiert den Chat-Verlauf für die Kontextverarbeitung.
-
-        Args:
-            session_history (List[Dict]): Liste aller Nachrichten der Session
-            max_nachrichten (int): Maximale Anzahl zu berücksichtigender Nachrichten
-
-        Returns:
-            str: Formatierter Chat-Kontext für das LLM
-        """
+        """Formatiert den Chat-Verlauf"""
         if not session_history:
             return ""
 
@@ -65,120 +130,66 @@ class ChatHandlerADK:
 
         return formatted + "=== AKTUELLE FRAGE ===\n"
 
-    def _ist_persoenliche_frage(self, query: str) -> bool:
+    def _get_system_prompt(self) -> str:
         """
-        Analysiert ob eine Frage persönlich/kontextbezogen ist.
-
-        Args:
-            query (str): Benutzeranfrage
-
-        Returns:
-            bool: True wenn die Frage Gesprächskontext benötigt
+        System-Prompt mit Markdown-Unterstützung und Tools.
         """
-        keywords = [
-            'wie heiße ich', 'mein name', 'vorhin', 'zuvor', 'was habe ich',
-            'erinnerst du dich', 'weißt du noch', 'wer bin ich', 'letzte frage'
-        ]
-        return any(keyword in query.lower() for keyword in keywords)
+        verfuegbare_dokumente = self.vektor_store.verfuegbare_dokumente_auflisten()
+        dokument_info = ""
 
-    def _braucht_dokumentensuche(self, query: str) -> Tuple[bool, Optional[str]]:
+        if verfuegbare_dokumente:
+            dokument_liste = ", ".join(verfuegbare_dokumente)
+            dokument_info = f"""
+
+VERFÜGBARE DOKUMENTE: {dokument_liste}
+
+TOOLS:
+- **document_search**: Durchsuche Dokumente nach relevanten Informationen
+
+Du kannst diese Tools verwenden wenn:
+- Nutzer nach Informationen fragt die in Dokumenten stehen könnten
+- Nutzer explizit nach Dokumenten fragt
+- Die Frage komplex genug ist dass eine Dokumentensuche hilfreich wäre
+
+Entscheide selbstständig ob du Tools verwenden möchtest oder direkt antworten kannst."""
+
+        return f"""Du bist ein hilfsreicher KI-Assistent mit Zugang zu hochgeladenen Dokumenten.
+
+MARKDOWN-FORMATIERUNG:
+- Nutze **fett** für wichtige Begriffe
+- Nutze *kursiv* für Betonungen  
+- Nutze `Code` für technische Begriffe
+- Nutze ## Überschriften bei längeren Antworten
+- Nutze - Listen für Aufzählungen
+- Nutze > Blockquotes für wichtige Hinweise{dokument_info}
+
+Antworte auf Deutsch und strukturiere deine Antworten klar."""
+
+    def antwort_generieren(self, query: str, session_history: List[Dict[str, Any]] = None, temperature: float = 0.7) -> Dict[str, Any]:
         """
-        Analysiert ob eine Anfrage Dokumentensuche benötigt und extrahiert Dokumentnamen.
-
-        Args:
-            query (str): Benutzeranfrage
-
-        Returns:
-            Tuple[bool, Optional[str]]: (Suche nötig, spezifisches Dokument)
+        Hauptfunktion für intelligente Antwortgenerierung
         """
-        query_lower = query.lower()
-
-        # Explizite Dokumentreferenz mit #
-        dokument_match = re.search(r'#(\w+)', query)
-        if dokument_match:
-            return True, dokument_match.group(1)
-
-        # Dokumentbezogene Keywords
-        dokument_keywords = [
-            'in den dokumenten', 'im dokument', 'laut dokument', 'steht geschrieben',
-            'welche dokumente', 'verfügbare dokumente', 'findest du', 'suche nach'
-        ]
-
-        if any(keyword in query_lower for keyword in dokument_keywords):
-            return True, None
-
-        # Komplexe Fragen automatisch durchsuchen
-        if len(query.split()) > 6:
-            return True, None
-
-        return False, None
-
-    def antwort_generieren(self, query: str, session_history: List[Dict[str, Any]] = None) -> Dict[str, Any]:
-        """
-        Hauptfunktion für intelligente Antwortgenerierung mit Multi-Modus-Erkennung.
-
-        Args:
-            query (str): Benutzeranfrage
-            session_history (List[Dict]): Optionaler Chat-Verlauf für Kontext
-
-        Returns:
-            Dict[str, Any]: Strukturierte Antwort mit Metadaten und verwendeten Tools
-        """
-        chat_kontext = self._chat_history_formatieren(session_history) if session_history else ""
-
-        # Fähigkeiten-Anfrage erkennen
-        if any(word in query.lower() for word in ['was kannst du', 'deine fähigkeiten', 'hilfe']):
+        # Prüfe ob ein Modell verfügbar ist
+        if not self.model_name:
             return {
-                "antwort": "Ich kann normale Fragen beantworten, in deinen Dokumenten suchen und mich an unser Gespräch erinnern. Was möchtest du wissen?",
+                "antwort": "**Fehler:** Kein Ollama-Modell verfügbar. Bitte lade zuerst ein Modell herunter:\n\n```bash\nollama pull llama3\n# oder\nollama pull mistral\n```",
                 "quellen": [],
                 "verwendete_tools": [],
-                "success": True,
-                "modus": "faehigkeiten"
+                "success": False,
+                "modus": "error"
             }
 
-        # Persönliche/Kontext-Fragen
-        if self._ist_persoenliche_frage(query):
-            if not chat_kontext:
-                antwort = "Entschuldigung, ich habe noch keinen Gesprächsverlauf mit dir."
-            else:
-                prompt = f"""{chat_kontext}
-Beantworte die Frage basierend auf unserem Gespräch: {query}
+        chat_kontext = self._chat_history_formatieren(session_history) if session_history else ""
 
+        prompt = f"""{self._get_system_prompt()}
+
+{chat_kontext if chat_kontext else ""}
+Beantworte freundlich und strukturiert: {query}
+Falls du nichts dazu weißt, gib das klar an.
+Gib keine erfundenen Informationen wieder.
+Gib keinen leeren Text zurück.
 Antwort:"""
-                antwort = self.llm.generate_content(prompt, temperature=0.7)
-
-            return {
-                "antwort": antwort,
-                "quellen": [],
-                "verwendete_tools": ["chat_memory"],
-                "success": True,
-                "modus": "persoenlich"
-            }
-
-        # Dokumentensuche-Bedarf prüfen
-        braucht_suche, dokument_name = self._braucht_dokumentensuche(query)
-        if braucht_suche:
-            return self._antwort_mit_dokumenten(query, dokument_name, chat_kontext)
-
-        return self._normale_antwort(query, chat_kontext)
-
-    def _normale_antwort(self, query: str, chat_kontext: str = "") -> Dict[str, Any]:
-        """
-        Generiert normale Antworten ohne Dokumentensuche.
-
-        Args:
-            query (str): Benutzeranfrage
-            chat_kontext (str): Optionaler Gesprächskontext
-
-        Returns:
-            Dict[str, Any]: Standard-Antwort mit Kontext
-        """
-        prompt = f"""{chat_kontext if chat_kontext else "Du bist ein hilfsreicher Assistent."}
-Beantworte freundlich auf Deutsch: {query}
-
-Antwort:"""
-
-        antwort = self.llm.generate_content(prompt, temperature=0.8)
+        antwort = self._generate_content(prompt, temperature=temperature)
         tools_used = ["chat_memory"] if chat_kontext else []
 
         return {
@@ -189,51 +200,33 @@ Antwort:"""
             "modus": "normal"
         }
 
-    def _antwort_mit_dokumenten(self, query: str, dokument_name: Optional[str] = None, chat_kontext: str = "") -> Dict[str, Any]:
-        """
-        Generiert Antworten mit Dokumentensuche und Quellenangaben.
+    def _dokument_suchen(self, query: str, dokument_name: Optional[str] = None, chat_kontext: str = "", temperature: float = 0.7) -> Dict[str, Any]:
+        """Führt Dokumentensuche durch"""
+        # Dokumentensuche
+        if dokument_name:
+            ergebnisse = self.vektor_store.nach_dokument_suchen(dokument_name, query, 5)
+        else:
+            ergebnisse = self.vektor_store.aehnliche_suchen(query, 5)
 
-        Args:
-            query (str): Benutzeranfrage
-            dokument_name (Optional[str]): Spezifisches Dokument für die Suche
-            chat_kontext (str): Gesprächskontext
-
-        Returns:
-            Dict[str, Any]: Antwort mit Dokumentenquellen und Suchmetadaten
-        """
-        # Spezielle Behandlung für Dokumentenliste
-        if 'welche dokumente' in query.lower():
-            list_result = self.doc_processor.list_documents()
-            if list_result.get("success"):
-                dokumente = list_result.get("dokumente", [])
-                antwort = f"Verfügbare Dokumente: {', '.join(dokumente)}" if dokumente else "Keine Dokumente verfügbar."
-                return {
-                    "antwort": antwort,
-                    "quellen": dokumente,
-                    "verwendete_tools": ["dokumente_auflisten"],
-                    "success": True,
-                    "modus": "dokumentenliste"
-                }
-
-        # Dokumentensuche durchführen
-        search_result = self.doc_processor.search_documents(query, dokument_name)
         tools_used = ["dokumente_suchen"]
         if chat_kontext:
             tools_used.append("chat_memory")
 
-        if search_result.get("success") and search_result.get("ergebnisse"):
-            dokument_kontext = self.doc_processor.format_search_results(search_result["ergebnisse"])
-            quellen = list(set([erg["dokument"] for erg in search_result["ergebnisse"]]))
+        if ergebnisse:
+            dokument_kontext = "\n".join([f"Dokument: {erg['dokument']}\nText: {erg['text']}\n---" for erg in ergebnisse])
+            quellen = list(set([erg["dokument"] for erg in ergebnisse]))
 
-            prompt = f"""{chat_kontext}
+            prompt = f"""{self._get_system_prompt()}
+
+{chat_kontext}
 DOKUMENT-KONTEXT:
 {dokument_kontext}
 
-Beantworte basierend auf den Dokumenten: {query}
+Beantworte die Frage basierend auf den gefundenen Dokumenten: {query}
 
 Antwort:"""
 
-            antwort = self.llm.generate_content(prompt)
+            antwort = self._generate_content(prompt, temperature=temperature)
 
             return {
                 "antwort": antwort,
@@ -244,30 +237,14 @@ Antwort:"""
             }
         else:
             return {
-                "antwort": "Keine relevanten Informationen in den Dokumenten gefunden.",
+                "antwort": "**Keine relevanten Informationen** in den Dokumenten gefunden. Versuche eine andere Formulierung oder lade weitere Dokumente hoch.",
                 "quellen": [],
                 "verwendete_tools": tools_used,
                 "success": True,
                 "modus": "dokumentensuche_leer"
             }
 
-    def ollama_verfuegbar(self) -> bool:
-        """Prüft Ollama-Verfügbarkeit"""
-        return self.llm.is_available()
-
-    def verfuegbare_modelle_auflisten(self) -> List[str]:
-        """Listet alle verfügbaren Ollama-Modelle auf"""
-        return self.llm.get_available_models()
-
-    def model_testen(self, model_name: str) -> bool:
-        """Testet ob ein Modell funktionsfähig ist"""
-        return self.llm.test_model(model_name)
-
-    def model_wechseln(self, neues_model: str):
-        """Wechselt zu einem neuen LLM-Modell"""
-        self.llm.switch_model(neues_model)
-
     @property
     def model(self):
         """Gibt das aktuell verwendete Modell zurück"""
-        return self.llm.model_name
+        return self.model_name
