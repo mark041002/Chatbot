@@ -1,6 +1,10 @@
+// Basis-URL für API-Anfragen
 const API_BASE = 'http://127.0.0.1:8000';
 
+// Hilfsfunktion, um ein Element anhand der ID zu holen
 const $ = id => document.getElementById(id);
+
+// Alle wichtigen DOM-Elemente werden gesammelt
 const elements = {
     status: $('status'), modelSelect: $('modelSelect'), testModelBtn: $('testModelBtn'),
     fileUpload: $('fileUpload'), uploadBtn: $('uploadBtn'), documentList: $('documentList'),
@@ -13,23 +17,34 @@ const elements = {
     toolSearchBtn: $('toolSearchBtn')
 };
 
+// Status der Anwendung
 let state = {
-    currentModel: '',
-    currentSessionId: null,
-    chatHistoryExpanded: true,
-    temperature: 0.7,
-    toolSearchActive: false // NEU: Status für Tool-Button
+    currentModel: '',                // Aktuell ausgewähltes Modell
+    currentSessionId: null,          // Aktuelle Chat-Session-ID
+    chatHistoryExpanded: true,       // Status: Chat-Historie sichtbar?
+    temperature: 0.7,                // Temperatur für KI-Modell
+    toolSearchActive: false          // Status für Tool-Button (nicht benutzt)
 };
 
+// API-Methoden für Backend-Kommunikation
 const api = {
+    // GET-Anfrage ausführen
     async get(endpoint) { return (await fetch(`${API_BASE}${endpoint}`)).json(); },
+
+    // POST-Anfrage ausführen
     async post(endpoint, data = {}) {
         const response = await fetch(`${API_BASE}${endpoint}`, {
-            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data)
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
         });
         return { response, data: await response.json() };
     },
+
+    // DELETE-Anfrage ausführen
     async delete(endpoint) { return (await fetch(`${API_BASE}${endpoint}`, { method: 'DELETE' })).json(); },
+
+    // Datei-Upload durchführen
     async upload(file) {
         const formData = new FormData();
         formData.append('file', file);
@@ -38,7 +53,9 @@ const api = {
     }
 };
 
+// UI-Hilfsfunktionen
 const ui = {
+    // Zeigt eine Benachrichtigung an
     notify: (message, type = 'success') => {
         elements.notification.textContent = message;
         elements.notification.className = `notification ${type} show`;
@@ -46,15 +63,19 @@ const ui = {
     }
 };
 
+// Temperatur-Slider: Aktualisiert Temperaturwert im State und UI
 elements.temperatureSlider.addEventListener('input', (e) => {
     const value = parseInt(e.target.value);
     state.temperature = value / 100;
     elements.temperatureValue.textContent = state.temperature.toFixed(1);
 });
 
+// Initialisierung der Anwendung beim Laden
 async function initialize() {
     try {
+        // Wichtige Daten laden
         await Promise.all([checkHealth(), loadModels(), loadDocuments(), loadChatHistory()]);
+        // UI aktivieren
         Object.values(elements).forEach(el => { if (el?.disabled !== undefined) el.disabled = false; });
         ui.notify('Anwendung erfolgreich initialisiert');
     } catch (error) {
@@ -62,24 +83,25 @@ async function initialize() {
     }
 }
 
+// Prüft, ob Backend/Ollama erreichbar ist
 async function checkHealth() {
     const data = await api.get('/api/health');
     const statusClass = data.ollama_available ? 'online' : 'offline';
     const statusText = data.ollama_available ? 'Ollama verbunden' : 'Ollama nicht verfügbar';
 
+    // Status anzeigen
     elements.status.className = `status ${statusClass}`;
     elements.status.innerHTML = `
         <div class="status-dot"></div>
         <span>${statusText}</span>
-        ${data.ollama_available ? `<small style="color: var(--gray-600); margin-left: 10px;">
-            ${data.uploaded_files_count} Dateien (${data.uploaded_files_size_mb} MB)
-        </small>` : ''}
     `;
 
+    // Wenn Ollama nicht verfügbar, Fehler werfen
     if (!data.ollama_available) throw new Error('Ollama nicht verfügbar');
     state.currentModel = data.current_model || '';
 }
 
+// Lädt verfügbare KI-Modelle und befüllt Auswahl
 async function loadModels() {
     const data = await api.get('/api/models');
     elements.modelSelect.innerHTML = data.models.length > 0
@@ -87,6 +109,7 @@ async function loadModels() {
         : '<option>Keine Modelle verfügbar</option>';
 }
 
+// Lädt die Dokumentenliste und zeigt sie an
 async function loadDocuments() {
     const data = await api.get('/api/documents');
     elements.documentList.innerHTML = data.documents.length > 0
@@ -105,6 +128,7 @@ async function loadDocuments() {
         : '<li style="color: var(--gray-600); font-style: italic; padding: 20px; text-align: center;">Keine Dokumente vorhanden</li>';
 }
 
+// Lädt Chat-Historie (alle gespeicherten Sessions)
 async function loadChatHistory() {
     try {
         const sessions = await api.get('/api/chat/sessions');
@@ -124,6 +148,7 @@ async function loadChatHistory() {
     }
 }
 
+// Lädt eine einzelne Chat-Session und zeigt die Nachrichten an
 async function loadChatSession(sessionId) {
     try {
         const session = await api.get(`/api/chat/sessions/${sessionId}`);
@@ -137,6 +162,7 @@ async function loadChatSession(sessionId) {
     }
 }
 
+// Erstellt einen neuen Chat (setzt Session zurück)
 function createNewChat() {
     state.currentSessionId = null;
     clearChat();
@@ -144,6 +170,7 @@ function createNewChat() {
     ui.notify('Neuer Chat bereit');
 }
 
+// Löscht eine Chat-Session
 async function deleteChatSession(sessionId) {
     const isCurrentSession = sessionId === state.currentSessionId;
     try {
@@ -160,12 +187,14 @@ async function deleteChatSession(sessionId) {
     }
 }
 
+// Aktualisiert den Chat-Titel im Header
 function updateChatHeader(title = null) {
     elements.chatTitle.textContent = title ? `💬 ${title}` : '💬 Neuer Chat';
     elements.chatSessionInfo.style.display = title ? 'block' : 'none';
     if (title) elements.chatSessionInfo.textContent = 'Gespeicherte Session';
 }
 
+// Sendet eine Nachricht an die API und zeigt Antwort an
 async function sendMessage() {
     const message = elements.messageInput.value.trim();
     if (!message) return;
@@ -176,6 +205,7 @@ async function sendMessage() {
     elements.sendBtn.disabled = true;
 
     try {
+        // Request-Daten zusammenstellen
         const requestBody = {
             message,
             temperature: state.temperature,
@@ -184,11 +214,14 @@ async function sendMessage() {
             requestBody.session_id = state.currentSessionId;
         }
 
+        // Nachricht an Backend schicken
         const { response, data } = await api.post('/api/chat', requestBody);
 
         if (response.ok && data.success) {
+            // KI-Antwort anzeigen
             addMessage(data.response, 'assistant', data.sources);
 
+            // Session-ID ggf. übernehmen und Historie neu laden
             if (data.session_id) {
                 const isNewSession = !state.currentSessionId;
                 state.currentSessionId = data.session_id;
@@ -210,14 +243,17 @@ async function sendMessage() {
     }
 }
 
+// Fügt eine Nachricht ins Chat-Fenster ein
 function addMessage(content, sender, sources = []) {
     const emptyState = elements.chatMessages.querySelector('.empty-state');
     if (emptyState) emptyState.remove();
 
+    // Quellen ggf. anzeigen
     const sourcesHtml = sources.length > 0 ? `<div class="message-sources">📄 Quellen: ${sources.join(', ')}</div>` : '';
     const messageDiv = document.createElement('div');
     messageDiv.className = `message ${sender}`;
 
+    // Markdown für KI-Antworten rendern (falls 'marked' Bibliothek verfügbar)
     const processedContent = sender === 'assistant' && window.marked ? marked.parse(content) : content;
 
     messageDiv.innerHTML = `<div class="message-content">${processedContent}</div>${sourcesHtml}`;
@@ -226,16 +262,17 @@ function addMessage(content, sender, sources = []) {
     elements.chatMessages.scrollTop = elements.chatMessages.scrollHeight;
 }
 
+// Löscht alle Nachrichten (setzt Chat zurück)
 function clearChat() {
     elements.chatMessages.innerHTML = `
         <div class="empty-state">
             <h3>Willkommen beim lokalen KI-Chatbot</h3>
             <p>Stelle eine Frage oder lade ein Dokument hoch, um zu beginnen.</p>
-            <p>Benutze den Knopf Links von der Eingabezeile um die Dokumentensuche zu aktivieren/deaktivieren</p>
         </div>
     `;
 }
 
+// Dokument hochladen
 async function uploadDocument() {
     const file = elements.fileUpload.files[0];
     if (!file) return ui.notify('Bitte wähle eine Datei aus', 'error');
@@ -262,6 +299,7 @@ async function uploadDocument() {
     }
 }
 
+// Dokument löschen
 async function deleteDocument(docName) {
     try {
         await api.delete(`/api/documents/${docName}`);
@@ -272,6 +310,7 @@ async function deleteDocument(docName) {
     }
 }
 
+// Testet das ausgewählte Modell auf Funktion
 async function testModel() {
     const model = elements.modelSelect.value;
     if (!model) return;
@@ -295,6 +334,7 @@ async function testModel() {
     }
 }
 
+// Formatiert ein Datum für Anzeige (z.B. "vor 2 Std")
 function formatDate(dateString) {
     const date = new Date(dateString);
     const diffMs = new Date() - date;
@@ -309,13 +349,14 @@ function formatDate(dateString) {
     return date.toLocaleDateString('de-DE');
 }
 
+// Blendet die Chat-Historie ein/aus
 function toggleChatHistory() {
     state.chatHistoryExpanded = !state.chatHistoryExpanded;
     elements.chatHistoryContainer.style.display = state.chatHistoryExpanded ? 'block' : 'none';
     elements.toggleHistoryBtn.querySelector('.toggle-icon').textContent = state.chatHistoryExpanded ? '▼' : '▶';
 }
 
-// Event Listeners
+// Event-Listener für UI-Elemente
 elements.testModelBtn.addEventListener('click', testModel);
 elements.uploadBtn.addEventListener('click', uploadDocument);
 elements.sendBtn.addEventListener('click', sendMessage);
@@ -323,6 +364,7 @@ elements.newChatBtn.addEventListener('click', createNewChat);
 elements.toggleHistoryBtn.addEventListener('click', toggleChatHistory);
 elements.messageInput.addEventListener('keypress', (e) => e.key === 'Enter' && !elements.sendBtn.disabled && sendMessage());
 
+// Modellwechsel: sendet neuen Modellnamen ans Backend
 elements.modelSelect.addEventListener('change', async () => {
     const selectedModel = elements.modelSelect.value;
     if (selectedModel && selectedModel !== state.currentModel) {
@@ -342,4 +384,5 @@ elements.modelSelect.addEventListener('change', async () => {
     }
 });
 
+// Initialisierung beim Laden der Seite
 document.addEventListener('DOMContentLoaded', initialize);

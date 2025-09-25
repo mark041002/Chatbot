@@ -1,5 +1,5 @@
 """
-Document Processor - Vereinfacht für reine Textextraktion
+Document Processor - Vereinfacht für reine Textextraktion mit flexiblem poppler_path für PDF-OCR
 """
 
 import PyPDF2
@@ -10,16 +10,13 @@ import easyocr
 from pdf2image import convert_from_path
 import numpy as np
 
-
-
 class DokumentProcessor:
     """Vereinfachter Document Processor für Textextraktion"""
-
-    def __init__(self, chunk_groesse: int = 1000, vektor_store=None):
+    def __init__(self, chunk_groesse: int = 1000, vektor_store=None, poppler_path: str = None):
         self.chunk_groesse = chunk_groesse
         self.vektor_store = vektor_store
         self.ocr_reader = easyocr.Reader(['de', 'en'], gpu=False)
-
+        self.poppler_path = poppler_path
 
     def dokument_verarbeiten(self, datei_pfad: str, dokument_name: str = None) -> Dict[str, Any]:
         """Verarbeitet ein Dokument zu Text-Chunks"""
@@ -43,24 +40,21 @@ class DokumentProcessor:
         erweiterung = os.path.splitext(datei_pfad)[1].lower()
 
         if erweiterung == '.pdf':
-            return self._pdf_verarbeiten(datei_pfad)
+            return self.pdf_verarbeiten(datei_pfad)
         elif erweiterung == '.docx':
-            return self._docx_text_extrahieren(datei_pfad), False
+            return self.docx_text_extrahieren(datei_pfad), False
         elif erweiterung == '.txt':
-            return self._txt_text_extrahieren(datei_pfad), False
+            return self.txt_text_extrahieren(datei_pfad), False
         else:
             raise ValueError(f"Nicht unterstütztes Dateiformat: {erweiterung}")
 
-    def _pdf_verarbeiten(self, datei_pfad: str) -> Tuple[str, bool]:
+    def pdf_verarbeiten(self, datei_pfad: str) -> Tuple[str, bool]:
         """Verarbeitet PDF-Dateien mit OCR-Fallback"""
-        text = self._pdf_text_extrahieren(datei_pfad)
-
-        # OCR nur wenn wenig Text und OCR verfügbar
-        if len(text.strip()) < 100 and self.ocr_reader:
-            ocr_text = self._pdf_ocr(datei_pfad)
-            if len(ocr_text.strip()) > len(text.strip()):
-                return ocr_text, True
-
+        text = self.pdf_text_extrahieren(datei_pfad)
+        ocr_text = self._pdf_ocr(datei_pfad) if self.ocr_reader else ""
+        # Wenn OCR-Ergebnis besser, verwende OCR
+        if len(ocr_text.strip()) > len(text.strip()):
+            return ocr_text, True
         return text, False
 
     def _pdf_ocr(self, datei_pfad: str) -> str:
@@ -69,20 +63,22 @@ class DokumentProcessor:
             return ""
 
         try:
-            seiten = convert_from_path(datei_pfad, dpi=200)
+            seiten = convert_from_path(
+                datei_pfad, dpi=200,
+                poppler_path=self.poppler_path
+            )
             text = ""
-
             for seite in seiten:
                 results = self.ocr_reader.readtext(np.array(seite))
                 for (_, erkannter_text, confidence) in results:
                     if confidence > 0.4:
                         text += erkannter_text + " "
-
             return text
-        except Exception:
+        except Exception as e:
+            print(f"OCR-Fehler: {e}")
             return ""
 
-    def _pdf_text_extrahieren(self, datei_pfad: str) -> str:
+    def pdf_text_extrahieren(self, datei_pfad: str) -> str:
         """Standard PDF-Textextraktion"""
         text = ""
         try:
@@ -90,13 +86,13 @@ class DokumentProcessor:
                 pdf_reader = PyPDF2.PdfReader(datei)
                 for seite in pdf_reader.pages:
                     seiten_text = seite.extract_text()
-                    if seiten_text.strip():
+                    if seiten_text and seiten_text.strip():
                         text += seiten_text + "\n\n"
         except Exception:
             pass
         return text
 
-    def _docx_text_extrahieren(self, datei_pfad: str) -> str:
+    def docx_text_extrahieren(self, datei_pfad: str) -> str:
         """Word-Dokument Textextraktion"""
         text = ""
         try:
@@ -108,7 +104,7 @@ class DokumentProcessor:
             pass
         return text
 
-    def _txt_text_extrahieren(self, datei_pfad: str) -> str:
+    def txt_text_extrahieren(self, datei_pfad: str) -> str:
         """Text-Datei lesen"""
         try:
             with open(datei_pfad, 'r', encoding='utf-8') as datei:
@@ -143,8 +139,7 @@ class DokumentProcessor:
                     chunks.append(aktueller_chunk.strip())
 
                 if len(absatz) > self.chunk_groesse:
-                    # Langen Text aufteilen
-                    teil_chunks = self._langen_text_aufteilen(absatz)
+                    teil_chunks = self.langen_text_aufteilen(absatz)
                     chunks.extend(teil_chunks)
                     aktueller_chunk = ""
                 else:
@@ -155,7 +150,7 @@ class DokumentProcessor:
 
         return chunks if chunks else [""]
 
-    def _langen_text_aufteilen(self, text: str) -> List[str]:
+    def langen_text_aufteilen(self, text: str) -> List[str]:
         """Teilt sehr lange Texte satzweise auf"""
         chunks = []
         aktueller_chunk = ""
