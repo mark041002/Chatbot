@@ -46,7 +46,7 @@ Mindestens ein Sprachmodell muss lokal vorhanden sein. Beispiele:
 In der Konsole:
 ```bash
 ollama pull gemma3:4b
-
+#oder
 ollama pull qwen3:12b
 ```
 Gemma3:4b braucht ca. 4GB VRAM, Qwen3:12b ca. 9GB VRAM.
@@ -54,7 +54,7 @@ Falls sie nur eine CPU haben, nutzen sie gemma3:4b oder gemma3:1b.
 Prinzipiell können auch andere Modelle genutzt werden, die mit Ollama kompatibel sind.
 Die Modellnamen finden sie unter https://ollama.com/library
 
-### 6. Anwendung starten
+### 5. Anwendung starten
 1. **Ollama-Server starten** (falls nicht bereits aktiv):
    ```bash
    ollama serve
@@ -72,7 +72,7 @@ Die API ist jetzt erreichbar unter:
 http://localhost:8000
 
 
-### 8. Frontend öffnen
+### 6. Frontend öffnen
 
 Nun können sie im Frontend die Webseite öffnen.
 Oben Rechts sollte nun in Grün Ollama verbunden stehen und es sollte in der Mitte ein Popup erscheinen, wo steht Anwedung erfolgreich gestartet.
@@ -87,4 +87,3 @@ Auf der Rechten Seite können sie per Drag & Drop oder Dateiauswahl Dokumente ho
 Ebenfalls sehen sie dort alle hochgeladenen Dokumente und können diese auch wieder löschen.
 
 
-**Viel Erfolg beim lokalen KI-Chatbot!**
